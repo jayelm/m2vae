@@ -306,7 +306,7 @@ class ConvNoteDecoder(NoteDecoder):
             nn.BatchNorm2d(64),
             Swish(),
             nn.ConvTranspose2d(64, 1, kernel_size=(1, 12), stride=(1, 12)),
-            nn.Tanh()
+            nn.Sigmoid()
         )
 
 
