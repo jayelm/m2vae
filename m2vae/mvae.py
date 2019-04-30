@@ -152,4 +152,4 @@ class ELBOLoss(nn.Module):
             bce += self.bce_loss(recon[ix].view(-1), data[ix].view(-1))
         kl_divergence  = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
         elbo = torch.mean(bce + annealing_factor * kl_divergence)
-        return elbo
+        return elbo, bce, torch.mean(kl_divergence)
