@@ -151,7 +151,7 @@ if __name__ == '__main__':
                         help='Cleaned/processed LP5 dataset')
     parser.add_argument('--exp_dir', default='exp/debug/',
                         help='Cleaned/processed LP5 dataset')
-    parser.add_argument('--activation', default='swish', choices=['swish', 'lrelu', 'relu'],
+    parser.add_argument('--activation', default='relu', choices=['swish', 'lrelu', 'relu'],
                         help='Nonlinear activation in encoders/decoders')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--no_kl', action='store_true', help="Don't use KL (vanilla autoencoder)")
