@@ -34,6 +34,7 @@ def train(epoch, model, optimizer, loss, dataloader, args):
         else:
             annealing_factor = 1.0
         # tracks: [batch_size, n_bar, n_timesteps, n_pitches, n_tracks]
+        tracks = tracks[:, :, :, :, :args.n_tracks]
         if args.cuda:
             tracks = tracks.cuda()
         batch_size = tracks.shape[0]
@@ -86,6 +87,7 @@ def test(epoch, model, optimizer, loss, dataloader, args):
     f1_meter = util.AverageMeter()
 
     for i, tracks in enumerate(dataloader):
+        tracks = tracks[:, :, :, :, :args.n_tracks]
         if args.cuda:
             tracks = tracks.cuda()
         batch_size = tracks.shape[0]
@@ -137,7 +139,8 @@ if __name__ == '__main__':
                         help='Cleaned/processed LP5 dataset')
     parser.add_argument('--activation', default='swish', choices=['swish', 'lrelu', 'relu'],
                         help='Nonlinear activation in encoders/decoders')
-    parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
+    parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    parser.add_argument('--n_tracks', type=int, default=5, help='Number of tracks (between 1 and 5 inclusive)')
     parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
     parser.add_argument('--annealing_epochs', type=int, default=20, help='Annealing epochs')
     parser.add_argument('--resume', action='store_true', help='Try to resume from checkpoint')
@@ -150,6 +153,9 @@ if __name__ == '__main__':
     parser.add_argument('--debug', action='store_true', help='Load tiny data file')
 
     args = parser.parse_args()
+
+    if args.n_tracks < 1 or args.n_tracks > 5:
+        parser.error('--n_tracks must be between 1 and 5 inclusive')
 
     # Make experiment directory
     resumable = args.resume and util.is_resumable(args.exp_dir)
@@ -189,7 +195,7 @@ if __name__ == '__main__':
         return note_decoder
 
     # Model
-    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=1, hidden_size=256)
+    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=args.n_tracks, hidden_size=256)
 
     # Optimizer
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -227,6 +233,8 @@ if __name__ == '__main__':
 
         for metric, value in train_metrics.items():
             metrics['train_{}'.format(metric)].append(value)
+        for metric, value in val_metrics.items():
+            metrics['val_{}'.format(metric)].append(value)
         metrics['current_epoch'] = epoch
 
         is_best = train_metrics['loss'] < metrics['best_loss']
