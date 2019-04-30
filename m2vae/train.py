@@ -45,7 +45,9 @@ def train(epoch, model, optimizer, loss, dataloader, args):
     meters = init_meters('loss', 'annealing_factor', 'recon_loss', 'kl_divergence', 'f1')
 
     for i, tracks in enumerate(dataloader):
-        if epoch < args.annealing_epochs:
+        if args.no_kl:
+            annealing_factor = 0.0
+        elif epoch < args.annealing_epochs:
             # compute the KL annealing factor for the current mini-batch in the current epoch
             annealing_factor = compute_kl_annealing_factor(i, epoch, len(dataloader),
                                                            args.annealing_epochs)
@@ -116,7 +118,7 @@ def test(epoch, model, optimizer, loss, dataloader, args):
 
         # Note: here total val loss assumes no annealing
         this_loss, recon_loss, kl_divergence = loss(tracks_recon, tracks, mu, logvar,
-                                                    annealing_factor=1.0)
+                                                    annealing_factor=0.0 if args.no_kl else 1.0)
         total_loss += this_loss
         n_elbo_terms += 1
 
@@ -152,6 +154,7 @@ if __name__ == '__main__':
     parser.add_argument('--activation', default='swish', choices=['swish', 'lrelu', 'relu'],
                         help='Nonlinear activation in encoders/decoders')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
+    parser.add_argument('--no_kl', action='store_true', help="Don't use KL (vanilla autoencoder)")
     parser.add_argument('--n_tracks', type=int, default=5, help='Number of tracks (between 1 and 5 inclusive)')
     parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
     parser.add_argument('--annealing_epochs', type=int, default=20, help='Annealing epochs')
