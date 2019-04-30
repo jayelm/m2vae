@@ -23,7 +23,7 @@ import util
 def train(epoch, model, optimizer, loss, dataloader, args):
     model.train()
     loss_meter = util.AverageMeter()
-    #  f1_meter = util.AverageMeter()
+    f1_meter = util.AverageMeter()
 
 
     for i, tracks in enumerate(dataloader):
@@ -51,16 +51,16 @@ def train(epoch, model, optimizer, loss, dataloader, args):
         n_elbo_terms += 1
 
         # All data - F1 score
-        #  tracks_np = tracks.detach().cpu().numpy().flatten().astype(np.bool)
-        #  tracks_recon_np = tracks_recon.detach().cpu().numpy().flatten() > 1
-        #  train_f1 = f1_score(tracks_np, tracks_recon_np)
+        tracks_np = tracks.detach().cpu().numpy().flatten().astype(np.bool)
+        tracks_recon_np = tracks_recon.detach().cpu().numpy().flatten() > 0
+        f1 = f1_score(tracks_np, tracks_recon_np)
 
         # Forward pass - single modalities
         #  for t in range(tracks.shape[-1]):
             #  track = tracks[t]
 
         loss_meter.update(total_loss, batch_size)
-        #  f1_meter.update(train_f1)
+        f1_meter.update(f1)
 
         total_loss.backward()
         optimizer.step()
@@ -72,7 +72,7 @@ def train(epoch, model, optimizer, loss, dataloader, args):
 
     metrics = {
         'loss': loss_meter.avg.item(),
-        #  'f1': f1_meter.avg.item()
+        'f1': f1_meter.avg.item()
     }
     print('====> Epoch: {}\ttrain {}'.format(
         epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
@@ -103,7 +103,7 @@ def test(epoch, model, optimizer, loss, dataloader, args):
 
         # All data - F1 score
         tracks_np = tracks.detach().cpu().numpy().flatten().astype(np.bool)
-        tracks_recon_np = tracks_recon.detach().cpu().numpy().flatten() > 1
+        tracks_recon_np = tracks_recon.detach().cpu().numpy().flatten() > 0
         f1 = f1_score(tracks_np, tracks_recon_np)
 
         # Forward pass - single modalities
@@ -135,13 +135,15 @@ if __name__ == '__main__':
                         help='Cleaned/processed LP5 dataset')
     parser.add_argument('--exp_dir', default='exp/debug/',
                         help='Cleaned/processed LP5 dataset')
+    parser.add_argument('--activation', default='swish', choices=['swish', 'lrelu', 'relu'],
+                        help='Nonlinear activation in encoders/decoders')
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size')
     parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
     parser.add_argument('--annealing_epochs', type=int, default=20, help='Annealing epochs')
     parser.add_argument('--resume', action='store_true', help='Try to resume from checkpoint')
     parser.add_argument('--num_workers', type=int, default=4, help='Number of dataloader workers')
     parser.add_argument('--pin_memory', action='store_true', help='Load data into CUDA-pinned memory')
-    parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
+    parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--log_interval', type=int, default=100, help='How often to log progress (in batches)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--cuda', action='store_true', help='Enable cuda')
@@ -152,12 +154,7 @@ if __name__ == '__main__':
     # Make experiment directory
     resumable = args.resume and util.is_resumable(args.exp_dir)
     os.makedirs(args.exp_dir, exist_ok=True)
-    if resumable:
-        # Make sure args are the same
-        old_args = util.load_args(args.exp_dir)
-        old_args['resume'] = True
-        assert old_args == vars(args)
-    else:
+    if not resumable:
         util.save_args(args, args.exp_dir)
 
     # Seed
@@ -167,6 +164,8 @@ if __name__ == '__main__':
         lpd_raw = np.load(args.data_file + '.debug')['arr_0']
     else:
         lpd_raw = data.load_data_from_npz(args.data_file)
+    # Calcualte mean positive weight
+    pos_prop = lpd_raw.mean()
     lpds = data.train_val_test_split(lpd_raw, random_state=random)
     del lpd_raw
     dataloaders = {}
@@ -185,21 +184,22 @@ if __name__ == '__main__':
         return muvar_encoder
 
     def decoder_func():
-        bar_decoder = models.RNNBarDecoder()
-        note_decoder = models.ConvNoteDecoder(bar_decoder)
+        bar_decoder = models.RNNTrackDecoder()
+        note_decoder = models.ConvBarDecoder(bar_decoder)
         return note_decoder
 
     # Model
-    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=5, hidden_size=256)
-
-    if args.cuda:
-        model = model.cuda()
+    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=1, hidden_size=256)
 
     # Optimizer
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     # Loss
-    loss = mvae.ELBOLoss()
+    loss = mvae.ELBOLoss(pos_weight = torch.tensor(1 / pos_prop))
+
+    if args.cuda:
+        model = model.cuda()
+        loss = loss.cuda()
 
     # If resume, load metrics; otherwise init metrics
     if resumable:
@@ -218,7 +218,7 @@ if __name__ == '__main__':
 
     if start_epoch > args.epochs:
         raise RuntimeError("start_epoch {} > total epochs {}".format(
-            start_epoch, args.epoch))
+            start_epoch, args.epochs))
 
 
     for epoch in range(start_epoch, args.epochs + 1):

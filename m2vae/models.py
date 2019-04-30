@@ -6,6 +6,9 @@ import torch.nn as nn
 import torch
 
 
+TRACK_RUNNING_STATS = True
+
+
 class Swish(nn.Module):
     """https://arxiv.org/abs/1710.05941"""
     def __init__(self):
@@ -16,27 +19,11 @@ class Swish(nn.Module):
         return x * self.sigmoid(x)
 
 
-class MultiTrackEncoder(nn.Module):
-    """
-    Wraps around a single track encoder to produce a
-    multi track encoder.
-    """
-    def __init__(self, encoder, n_tracks=5):
-        super(MultiTrackEncoder, self).__init__()
-        self.encoders = nn.ModuleList([encoder() for _ in range(n_tracks)])
-        self.n_tracks = n_tracks
-
-    def forward(self, x):
-        # Loop through tracks (final dim)
-        assert x.shape[-1] == self.n_tracks
-        x_enc = []
-        for t in range(self.n_tracks):
-            encoder = self.encoders[t]
-            xt = x[:, :, :, :, t]
-            xt_enc = encoder(xt)
-            x_enc.append(xt_enc)
-        import ipdb; ipdb.set_trace()
-        x_enc = torch.stack(x_enc, dim=3)
+ACTIVATIONS = {
+    'swish': Swish,
+    'lrelu': nn.LeakyReLU,
+    'relu': nn.ReLU
+}
 
 
 class TrackEncoder(nn.Module):
@@ -79,7 +66,7 @@ class RNNTrackEncoder(TrackEncoder):
     """
     Use a bidirectional RNN to concatenate the bars
     """
-    def __init__(self, encoder, n_bars=4, bar_hidden_size=64, output_size=256,
+    def __init__(self, encoder, n_bars=4, bar_hidden_size=256, output_size=256,
                  rnn_type='lstm'):
         super(RNNTrackEncoder, self).__init__(encoder)
         assert output_size % 2 == 0
@@ -137,28 +124,52 @@ class BarEncoder(nn.Module):
     pass
 
 
-class ConvBarEncoder(BarEncoder):
+class ConvBarEncoder(nn.Module):
     """
     A single bar encoder.
     """
-    def __init__(self):
+    def __init__(self, activation='swish'):
         super(ConvBarEncoder, self).__init__()
 
+        act = ACTIVATIONS[activation]
+
         self.trunk = nn.Sequential(
-            nn.Conv2d(1, 16, kernel_size=(1, 12), stride=(1, 12)),
-            nn.BatchNorm2d(16),
-            Swish(),
-            nn.Conv2d(16, 16, kernel_size=(1, 7), stride=(1, 7)),
-            nn.BatchNorm2d(16),
-            Swish(),
-            nn.Conv2d(16, 16, kernel_size=(3, 1), stride=(3, 1)),
-            nn.BatchNorm2d(16),
-            Swish(),
-            nn.Conv2d(16, 16, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(16),
-            Swish(),
-            nn.Conv2d(16, 16, kernel_size=(2, 1), stride=(2, 1)),
+            nn.Conv2d(1, 64, kernel_size=(1, 12), stride=(1, 12)),
+            nn.BatchNorm2d(64, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
+            nn.Conv2d(64, 128, kernel_size=(1, 7), stride=(1, 7)),
+            nn.BatchNorm2d(128, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
+            nn.Conv2d(128, 256, kernel_size=(3, 1), stride=(3, 1)),
+            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
+            nn.Conv2d(256, 256, kernel_size=(2, 1), stride=(2, 1)),
+            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
+            nn.Conv2d(256, 256, kernel_size=(2, 1), stride=(2, 1)),
+            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
+            nn.Conv2d(256, 1024, kernel_size=(2, 1), stride=(2, 1)),
+            nn.BatchNorm2d(1024, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
+            nn.Conv2d(1024, 256, kernel_size=(2, 1), stride=(2, 1)),
         )
+
+        #  self.trunk = nn.Sequential(
+            #  nn.Conv2d(1, 16, kernel_size=(1, 12), stride=(1, 12)),
+            #  nn.BatchNorm2d(16, track_running_stats=TRACK_RUNNING_STATS),
+            #  act(),
+            #  nn.Conv2d(16, 16, kernel_size=(1, 7), stride=(1, 7)),
+            #  nn.BatchNorm2d(16, track_running_stats=TRACK_RUNNING_STATS),
+            #  act(),
+            #  nn.Conv2d(16, 16, kernel_size=(3, 1), stride=(3, 1)),
+            #  nn.BatchNorm2d(16, track_running_stats=TRACK_RUNNING_STATS),
+            #  act(),
+            #  nn.Conv2d(16, 16, kernel_size=(2, 1), stride=(2, 1)),
+            #  nn.BatchNorm2d(16, track_running_stats=TRACK_RUNNING_STATS),
+            #  act(),
+            #  nn.Conv2d(16, 16, kernel_size=(2, 1), stride=(2, 1)),
+        #  )
 
 
     def forward(self, x):
@@ -194,14 +205,14 @@ class StdMuVarEncoder(MuVarEncoder):
     + FC to split an embedding into mu/logvar
     vectors
     """
-    def __init__(self, encoder, input_size=256, hidden_size=256, output_size=256, dropout=0.1):
+    def __init__(self, encoder, input_size=256, hidden_size=256, output_size=256, dropout=0.1, activation='swish'):
         super(StdMuVarEncoder, self).__init__(encoder)
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.trunk = nn.Sequential(
             nn.Linear(input_size, hidden_size),
-            Swish(),
+            ACTIVATIONS[activation](),
             nn.Dropout(p=dropout),
             nn.Linear(hidden_size, output_size * 2)
         )
@@ -213,16 +224,16 @@ class StdMuVarEncoder(MuVarEncoder):
         return mu, logvar
 
 
-class BarDecoder(nn.Module):
+class TrackDecoder(nn.Module):
     pass
 
 
-class RNNBarDecoder(BarDecoder):
+class RNNTrackDecoder(TrackDecoder):
     """
     A single bar decoder.
     """
     def __init__(self, input_size=256, output_size=256, n_bars=4, rnn_type='lstm'):
-        super(RNNBarDecoder, self).__init__()
+        super(RNNTrackDecoder, self).__init__()
 
         self.input_size = input_size
         self.output_size = output_size
@@ -266,9 +277,9 @@ class RNNBarDecoder(BarDecoder):
         return torch.stack(x_enc, dim=1)
 
 
-class NoteDecoder(nn.Module):
+class BarDecoder(nn.Module):
     def __init__(self, bar_decoder):
-        super(NoteDecoder, self).__init__()
+        super(BarDecoder, self).__init__()
         self.bar_decoder = bar_decoder
 
     def forward(self, x):
@@ -279,34 +290,35 @@ class NoteDecoder(nn.Module):
         raise NotImplementedError
 
 
-class ConvNoteDecoder(NoteDecoder):
+class ConvBarDecoder(BarDecoder):
     """
-    A single note decoder.
+    A single bar decoder.
     """
-    def __init__(self, encoder):
-        super(ConvNoteDecoder, self).__init__(encoder)
+    def __init__(self, encoder, activation='swish'):
+        super(ConvBarDecoder, self).__init__(encoder)
+
+        act = ACTIVATIONS[activation]
 
         self.trunk = nn.Sequential(
             nn.ConvTranspose2d(256, 1024, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(1024),
-            Swish(),
+            nn.BatchNorm2d(1024, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
             nn.ConvTranspose2d(1024, 256, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(256),
-            Swish(),
+            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
             nn.ConvTranspose2d(256, 256, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(256),
-            Swish(),
+            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
             nn.ConvTranspose2d(256, 256, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(256),
-            Swish(),
+            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
             nn.ConvTranspose2d(256, 128, kernel_size=(3, 1), stride=(3, 1)),
-            nn.BatchNorm2d(128),
-            Swish(),
+            nn.BatchNorm2d(128, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
             nn.ConvTranspose2d(128, 64, kernel_size=(1, 7), stride=(1, 7)),
-            nn.BatchNorm2d(64),
-            Swish(),
+            nn.BatchNorm2d(64, track_running_stats=TRACK_RUNNING_STATS),
+            act(),
             nn.ConvTranspose2d(64, 1, kernel_size=(1, 12), stride=(1, 12)),
-            nn.Sigmoid()
         )
 
 

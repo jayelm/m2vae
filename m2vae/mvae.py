@@ -126,9 +126,9 @@ class ELBOLoss(nn.Module):
     """
     ELBO Loss for MVAE
     """
-    def __init__(self):
+    def __init__(self, pos_weight=None):
         super(ELBOLoss, self).__init__()
-        self.bce_loss = nn.BCEWithLogitsLoss()
+        self.bce_loss = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     def forward(self, recon, data, mu, logvar, annealing_factor=1.0):
         """Compute the ELBO for an arbitrary number of data modalities.
@@ -149,7 +149,7 @@ class ELBOLoss(nn.Module):
 
         bce = 0  # reconstruction cost
         for ix in range(n_modalities):
-            bce += self.bce_loss(recon[ix], data[ix])
+            bce += self.bce_loss(recon[ix].view(-1), data[ix].view(-1))
         kl_divergence  = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
         elbo = torch.mean(bce + annealing_factor * kl_divergence)
         return elbo
