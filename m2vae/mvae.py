@@ -55,29 +55,37 @@ class MVAE(nn.Module):
         # Batch size
         batch_size = tracks.shape[0]
 
-        use_cuda   = next(self.parameters()).is_cuda  # check if CUDA
-        mu, logvar = prior_expert((1, batch_size, self.hidden_size),
-                                  use_cuda=use_cuda)
+        use_cuda = next(self.parameters()).is_cuda  # check if CUDA
+
+        # Row 0 is prior expert: N(0, 1).
+        all_mu = torch.zeros((1 + self.n_tracks, batch_size, self.hidden_size))
+        all_logvar = torch.zeros((1 + self.n_tracks, batch_size, self.hidden_size))
+        if use_cuda:
+            all_mu = all_mu.cuda()
+            all_logvar = all_logvar.cuda()
 
         for t in range(self.n_tracks):
             track = tracks[:, :, :, :, t]
             encoder = self.encoders[t]
             track_mu, track_logvar = encoder(track)
 
-            mu = torch.cat((mu, track_mu.unsqueeze(0)), dim=0)
-            logvar = torch.cat((logvar, track_logvar.unsqueeze(0)), dim=0)
+            all_mu[t + 1] = track_mu
+            all_logvar[t + 1] = track_logvar
 
         # product of experts to combine gaussians
-        mu, logvar = self.experts(mu, logvar)
+        mu, logvar = self.experts(all_mu, all_logvar)
         return mu, logvar
 
     def decode(self, z):
+        batch_size = z.shape[0]
+        decoded = torch.zeros((batch_size, 4, 48, 84, self.n_tracks),
+                              dtype=torch.float32).to(z.device)
         tracks = []
         for t in range(self.n_tracks):
             decoder = self.decoders[t]
             track = decoder(z)
-            tracks.append(track)
-        return torch.stack(tracks, dim=4)
+            decoded[:, :, :, :, t] = track
+        return decoded
 
 def get_batch_size(tracks):
     """
@@ -104,22 +112,6 @@ class ProductOfExperts(nn.Module):
         pd_var    = 1. / torch.sum(T, dim=0)
         pd_logvar = torch.log(pd_var)
         return pd_mu, pd_logvar
-
-
-def prior_expert(size, use_cuda=False):
-    """Universal prior expert. Here we use a spherical
-    Gaussian: N(0, 1).
-
-    @param size: integer
-                 dimensionality of Gaussian
-    @param use_cuda: boolean [default: False]
-                     cast CUDA on variables
-    """
-    mu     = Variable(torch.zeros(size))
-    logvar = Variable(torch.log(torch.ones(size)))
-    if use_cuda:
-        mu, logvar = mu.cuda(), logvar.cuda()
-    return mu, logvar
 
 
 class ELBOLoss(nn.Module):

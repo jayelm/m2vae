@@ -116,9 +116,9 @@ def test(epoch, model, optimizer, loss, dataloader, args):
         with torch.no_grad():
             tracks_recon, mu, logvar = model(tracks)
 
-        # Note: here total val loss assumes no annealing
-        this_loss, recon_loss, kl_divergence = loss(tracks_recon, tracks, mu, logvar,
-                                                    annealing_factor=0.0 if args.no_kl else 1.0)
+            # Note: here total val loss assumes no annealing
+            this_loss, recon_loss, kl_divergence = loss(tracks_recon, tracks, mu, logvar,
+                                                        annealing_factor=0.0 if args.no_kl else 1.0)
         total_loss += this_loss
         n_elbo_terms += 1
 
@@ -160,7 +160,7 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
     parser.add_argument('--annealing_epochs', type=int, default=20, help='Annealing epochs')
     parser.add_argument('--resume', action='store_true', help='Try to resume from checkpoint')
-    parser.add_argument('--num_workers', type=int, default=4, help='Number of dataloader workers')
+    parser.add_argument('--n_workers', type=int, default=4, help='Number of dataloader workers')
     parser.add_argument('--pin_memory', action='store_true', help='Load data into CUDA-pinned memory')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
     parser.add_argument('--log_interval', type=int, default=100, help='How often to log progress (in batches)')
@@ -183,7 +183,7 @@ if __name__ == '__main__':
     random = np.random.RandomState(args.seed)
 
     if args.debug:
-        lpd_raw = np.load(args.data_file + '.debug')['arr_0']
+        lpd_raw = np.load(args.data_file.replace('.npz', '_debug.npz'))['arr_0']
     else:
         lpd_raw = data.load_data_from_npz(args.data_file)
     # Calcualte mean positive weight
@@ -195,7 +195,7 @@ if __name__ == '__main__':
         dataloaders[split] = DataLoader(
             dataset,
             batch_size=args.batch_size,
-            num_workers=args.num_workers, shuffle=True,
+            num_workers=args.n_workers, shuffle=True,
             pin_memory=args.pin_memory
         )
 
