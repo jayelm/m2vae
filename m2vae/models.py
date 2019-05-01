@@ -6,9 +6,6 @@ import torch.nn as nn
 import torch
 
 
-TRACK_RUNNING_STATS = True
-
-
 class Swish(nn.Module):
     """https://arxiv.org/abs/1710.05941"""
     def __init__(self):
@@ -66,8 +63,8 @@ class RNNTrackEncoder(TrackEncoder):
     """
     Use a bidirectional RNN to concatenate the bars
     """
-    def __init__(self, encoder, n_bars=4, bar_hidden_size=256, output_size=256,
-                 rnn_type='lstm'):
+    def __init__(self, encoder, n_bars=4, bar_hidden_size=128, output_size=128,
+                 rnn_type='gru'):
         super(RNNTrackEncoder, self).__init__(encoder)
         assert output_size % 2 == 0
         self.hidden_size = output_size // 2
@@ -99,12 +96,12 @@ class FCTrackEncoder(TrackEncoder):
     A track encoder that puts concatenated bars into
     FC + Swish + FC
     """
-    def __init__(self, encoder, n_bars=4, bar_hidden_size=64, output_size=256):
+    def __init__(self, encoder, n_bars=4, bar_hidden_size=128, output_size=128, activation='relu'):
         super(FCTrackEncoder, self).__init__(encoder)
         self.output_size = output_size
         self.trunk = nn.Sequential(
             nn.Linear(bar_hidden_size * n_bars, output_size),
-            Swish(),
+            ACTIVATIONS[activation](),
             nn.Linear(output_size, output_size)
         )
 
@@ -128,45 +125,45 @@ class ConvBarEncoder(nn.Module):
     """
     A single bar encoder.
     """
-    def __init__(self, activation='swish'):
+    def __init__(self, activation='relu'):
         super(ConvBarEncoder, self).__init__()
 
         act = ACTIVATIONS[activation]
 
         self.trunk = nn.Sequential(
-            nn.Conv2d(1, 64, kernel_size=(1, 12), stride=(1, 12)),
-            nn.BatchNorm2d(64, track_running_stats=TRACK_RUNNING_STATS),
+            nn.Conv2d(1, 16, kernel_size=(1, 12), stride=(1, 12)),
+            nn.BatchNorm2d(16),
             act(),
-            nn.Conv2d(64, 128, kernel_size=(1, 7), stride=(1, 7)),
-            nn.BatchNorm2d(128, track_running_stats=TRACK_RUNNING_STATS),
+            nn.Conv2d(16, 32, kernel_size=(1, 7), stride=(1, 7)),
+            nn.BatchNorm2d(32),
             act(),
-            nn.Conv2d(128, 256, kernel_size=(3, 1), stride=(3, 1)),
-            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            nn.Conv2d(32, 64, kernel_size=(3, 1), stride=(3, 1)),
+            nn.BatchNorm2d(64),
             act(),
-            nn.Conv2d(256, 256, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            nn.Conv2d(64, 64, kernel_size=(2, 1), stride=(2, 1)),
+            nn.BatchNorm2d(64),
             act(),
-            nn.Conv2d(256, 256, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            nn.Conv2d(64, 64, kernel_size=(2, 1), stride=(2, 1)),
+            nn.BatchNorm2d(64),
             act(),
-            nn.Conv2d(256, 1024, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(1024, track_running_stats=TRACK_RUNNING_STATS),
+            nn.Conv2d(64, 128, kernel_size=(2, 1), stride=(2, 1)),
+            nn.BatchNorm2d(128),
             act(),
-            nn.Conv2d(1024, 256, kernel_size=(2, 1), stride=(2, 1)),
+            nn.Conv2d(128, 128, kernel_size=(2, 1), stride=(2, 1)),
         )
 
         #  self.trunk = nn.Sequential(
             #  nn.Conv2d(1, 16, kernel_size=(1, 12), stride=(1, 12)),
-            #  nn.BatchNorm2d(16, track_running_stats=TRACK_RUNNING_STATS),
+            #  nn.BatchNorm2d(16),
             #  act(),
             #  nn.Conv2d(16, 16, kernel_size=(1, 7), stride=(1, 7)),
-            #  nn.BatchNorm2d(16, track_running_stats=TRACK_RUNNING_STATS),
+            #  nn.BatchNorm2d(16),
             #  act(),
             #  nn.Conv2d(16, 16, kernel_size=(3, 1), stride=(3, 1)),
-            #  nn.BatchNorm2d(16, track_running_stats=TRACK_RUNNING_STATS),
+            #  nn.BatchNorm2d(16),
             #  act(),
             #  nn.Conv2d(16, 16, kernel_size=(2, 1), stride=(2, 1)),
-            #  nn.BatchNorm2d(16, track_running_stats=TRACK_RUNNING_STATS),
+            #  nn.BatchNorm2d(16),
             #  act(),
             #  nn.Conv2d(16, 16, kernel_size=(2, 1), stride=(2, 1)),
         #  )
@@ -201,11 +198,11 @@ class MuVarEncoder(nn.Module):
 
 class StdMuVarEncoder(MuVarEncoder):
     """
-    Wrap around an encoder with FC + Swish + Dropout
+    Wrap around an encoder with FC + Activation + Dropout
     + FC to split an embedding into mu/logvar
     vectors
     """
-    def __init__(self, encoder, input_size=256, hidden_size=256, output_size=256, dropout=0.1, activation='swish'):
+    def __init__(self, encoder, input_size=128, hidden_size=128, output_size=128, dropout=0.1, activation='relu'):
         super(StdMuVarEncoder, self).__init__(encoder)
         self.input_size = input_size
         self.hidden_size = hidden_size
@@ -232,7 +229,7 @@ class RNNTrackDecoder(TrackDecoder):
     """
     A single bar decoder.
     """
-    def __init__(self, input_size=256, output_size=256, n_bars=4, rnn_type='lstm'):
+    def __init__(self, input_size=128, output_size=128, n_bars=4, rnn_type='gru'):
         super(RNNTrackDecoder, self).__init__()
 
         self.input_size = input_size
@@ -242,10 +239,10 @@ class RNNTrackDecoder(TrackDecoder):
 
         self.init_h = nn.Linear(self.input_size, self.output_size)
         if self.rnn_type == 'lstm':
-            self.rnn_cell = nn.LSTMCell(self.output_size * 2, self.output_size)
+            self.rnn = nn.LSTM(self.input_size, self.output_size, batch_first=True)
             self.init_c = nn.Linear(self.input_size, self.output_size)
         elif self.rnn_type == 'gru':
-            self.rnn_cell = nn.GRUCell(self.input_size, self.output_size)
+            self.rnn = nn.GRU(self.input_size, self.output_size, batch_first=True)
         else:
             raise NotImplementedError('rnn_type = {}'.format(self.rnn_type))
 
@@ -256,25 +253,15 @@ class RNNTrackDecoder(TrackDecoder):
         """
         batch_size = x.shape[0]
         if self.rnn_type == 'lstm':
-            hidden = (self.init_h(x), self.init_c(x))
+            hidden = (self.init_h(x).unsqueeze(0), self.init_c(x).unsqueeze(0))
         elif self.rnn_type == 'gru':
-            hidden = self.init_h(x)
+            hidden = self.init_h(x).unsqueeze(0)
 
-        x_enc = []
-        for t in range(self.n_bars):
-            if self.rnn_type == 'lstm':
-                rnn_input = torch.cat((hidden[0], x), dim=1)
-            elif self.rnn_type == 'gru':
-                rnn_input = torch.cat((hidden, x), dim=1)
+        # Just give it the embedding over and over again as input
+        rnn_input = x.unsqueeze(1).expand(batch_size, self.n_bars, -1)
+        outputs, _ = self.rnn(rnn_input, hidden)
 
-            hidden = self.rnn_cell(rnn_input, hidden)
-
-            if self.rnn_type == 'lstm':
-                x_enc.append(hidden[0])
-            elif self.rnn_type == 'gru':
-                x_enc.append(hidden)
-
-        return torch.stack(x_enc, dim=1)
+        return outputs.contiguous()
 
 
 class BarDecoder(nn.Module):
@@ -294,31 +281,31 @@ class ConvBarDecoder(BarDecoder):
     """
     A single bar decoder.
     """
-    def __init__(self, encoder, activation='swish'):
+    def __init__(self, encoder, activation='relu'):
         super(ConvBarDecoder, self).__init__(encoder)
 
         act = ACTIVATIONS[activation]
 
         self.trunk = nn.Sequential(
-            nn.ConvTranspose2d(256, 1024, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(1024, track_running_stats=TRACK_RUNNING_STATS),
+            nn.ConvTranspose2d(128, 128, kernel_size=(2, 1), stride=(2, 1)),
+            nn.BatchNorm2d(128),
             act(),
-            nn.ConvTranspose2d(1024, 256, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            nn.ConvTranspose2d(128, 64, kernel_size=(2, 1), stride=(2, 1)),
+            nn.BatchNorm2d(64),
             act(),
-            nn.ConvTranspose2d(256, 256, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            nn.ConvTranspose2d(64, 64, kernel_size=(2, 1), stride=(2, 1)),
+            nn.BatchNorm2d(64),
             act(),
-            nn.ConvTranspose2d(256, 256, kernel_size=(2, 1), stride=(2, 1)),
-            nn.BatchNorm2d(256, track_running_stats=TRACK_RUNNING_STATS),
+            nn.ConvTranspose2d(64, 64, kernel_size=(2, 1), stride=(2, 1)),
+            nn.BatchNorm2d(64),
             act(),
-            nn.ConvTranspose2d(256, 128, kernel_size=(3, 1), stride=(3, 1)),
-            nn.BatchNorm2d(128, track_running_stats=TRACK_RUNNING_STATS),
+            nn.ConvTranspose2d(64, 32, kernel_size=(3, 1), stride=(3, 1)),
+            nn.BatchNorm2d(32),
             act(),
-            nn.ConvTranspose2d(128, 64, kernel_size=(1, 7), stride=(1, 7)),
-            nn.BatchNorm2d(64, track_running_stats=TRACK_RUNNING_STATS),
+            nn.ConvTranspose2d(32, 16, kernel_size=(1, 7), stride=(1, 7)),
+            nn.BatchNorm2d(16),
             act(),
-            nn.ConvTranspose2d(64, 1, kernel_size=(1, 12), stride=(1, 12)),
+            nn.ConvTranspose2d(16, 1, kernel_size=(1, 12), stride=(1, 12)),
         )
 
 

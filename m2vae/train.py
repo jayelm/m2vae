@@ -153,6 +153,7 @@ if __name__ == '__main__':
                         help='Cleaned/processed LP5 dataset')
     parser.add_argument('--activation', default='relu', choices=['swish', 'lrelu', 'relu'],
                         help='Nonlinear activation in encoders/decoders')
+    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden size of multitrack embeddings')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--no_kl', action='store_true', help="Don't use KL (vanilla autoencoder)")
     parser.add_argument('--n_tracks', type=int, default=5, help='Number of tracks (between 1 and 5 inclusive)')
@@ -200,17 +201,17 @@ if __name__ == '__main__':
 
     def encoder_func():
         bar_encoder = models.ConvBarEncoder()
-        track_encoder = models.RNNTrackEncoder(bar_encoder)
-        muvar_encoder = models.StdMuVarEncoder(track_encoder)
+        track_encoder = models.RNNTrackEncoder(bar_encoder, output_size=args.hidden_size)
+        muvar_encoder = models.StdMuVarEncoder(track_encoder, input_size=args.hidden_size, hidden_size=args.hidden_size, output_size=args.hidden_size)
         return muvar_encoder
 
     def decoder_func():
-        bar_decoder = models.RNNTrackDecoder()
+        bar_decoder = models.RNNTrackDecoder(input_size=args.hidden_size)
         note_decoder = models.ConvBarDecoder(bar_decoder)
         return note_decoder
 
     # Model
-    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=args.n_tracks, hidden_size=256)
+    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=args.n_tracks, hidden_size=args.hidden_size)
 
     # Optimizer
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
