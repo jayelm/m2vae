@@ -11,13 +11,36 @@ from torch.utils.data import DataLoader
 import torch.optim as optim
 
 import numpy as np
-from sklearn.metrics import f1_score
 from tqdm import tqdm
 
 import data
 import mvae
 import models
 import util
+
+
+def fast_f1(true, pred):
+    """
+    This is faster than detaching to cpu and using
+    sklearn.metrics.f1_score
+    """
+    true = true.view(-1)
+    pred = pred.view(-1)
+
+    hits = true == pred
+    misses = true != pred
+
+    true_positives = (pred * hits).sum().float()
+    false_positives = ((1 - pred) * (misses)).sum().float()
+    false_negatives = (pred * (misses)).sum().float()
+
+    precision = true_positives / (true_positives + false_positives)
+    recall = true_positives / (true_positives + false_negatives)
+
+    try:
+        return (2 * precision * recall / (precision + recall))
+    except ZeroDivisionError:
+        return torch.zeros(())
 
 
 def init_meters(*metrics):
@@ -40,9 +63,13 @@ def compute_kl_annealing_factor(batch, epoch, n_batches, annealing_epochs):
             float(annealing_epochs * n_batches))
 
 
-def train(epoch, model, optimizer, loss, dataloader, args):
+def train(epoch, model, optimizer, loss, dataloader, args,
+          report_f1=False):
     model.train()
-    meters = init_meters('loss', 'annealing_factor', 'recon_loss', 'kl_divergence', 'f1')
+    if report_f1:
+        meters = init_meters('loss', 'annealing_factor', 'recon_loss', 'kl_divergence', 'f1')
+    else:
+        meters = init_meters('loss', 'annealing_factor', 'recon_loss', 'kl_divergence')
 
     for i, tracks in enumerate(dataloader):
         if args.no_kl:
@@ -70,19 +97,20 @@ def train(epoch, model, optimizer, loss, dataloader, args):
 
         this_loss, recon_loss, kl_divergence = loss(tracks_recon, tracks, mu, logvar,
                                                     annealing_factor=annealing_factor)
+
         total_loss += this_loss
         n_elbo_terms += 1
-
-        # All data - F1 score
-        tracks_np = tracks.detach().cpu().numpy().flatten().astype(np.bool)
-        tracks_recon_np = tracks_recon.detach().cpu().numpy().flatten() > 0
-        f1 = f1_score(tracks_np, tracks_recon_np)
 
         meters['loss'].update(total_loss, batch_size)
         meters['annealing_factor'].update(annealing_factor, batch_size)
         meters['recon_loss'].update(recon_loss, batch_size)
         meters['kl_divergence'].update(kl_divergence, batch_size)
-        meters['f1'].update(f1, batch_size)
+
+        # All data - F1 score
+        if report_f1:
+            f1 = fast_f1(tracks.type(torch.ByteTensor),
+                         (tracks_recon > 0).type(torch.ByteTensor))
+            meters['f1'].update(f1, batch_size)
 
         total_loss.backward()
         optimizer.step()
@@ -93,49 +121,58 @@ def train(epoch, model, optimizer, loss, dataloader, args):
                 100. * i / len(dataloader), meters['loss'].avg, annealing_factor))
 
     metrics = compute_metrics(meters)
+    if not report_f1:
+        metrics['f1'] = float('nan')
     print('====> Epoch: {}\ttrain {}'.format(
         epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
     ))
     return metrics
 
 
-def test(epoch, model, optimizer, loss, dataloader, args):
+def test(epoch, model, optimizer, loss, dataloader, args,
+         report_f1=False):
     model.eval()
-    meters = init_meters('loss', 'recon_loss', 'kl_divergence', 'f1')
+    if report_f1:
+        meters = init_meters('loss', 'recon_loss', 'kl_divergence', 'f1')
+    else:
+        meters = init_meters('loss', 'recon_loss', 'kl_divergence')
 
-    for i, tracks in enumerate(dataloader):
-        tracks = tracks[:, :, :, :, :args.n_tracks]
-        if args.cuda:
-            tracks = tracks.cuda()
-        batch_size = tracks.shape[0]
+    with torch.no_grad():
+        for i, tracks in enumerate(dataloader):
+            tracks = tracks[:, :, :, :, :args.n_tracks]
+            if args.cuda:
+                tracks = tracks.cuda()
+            batch_size = tracks.shape[0]
 
-        total_loss = 0
-        n_elbo_terms = 0
+            total_loss = 0
+            n_elbo_terms = 0
 
-        # Forward pass - all data
-        with torch.no_grad():
+            # Forward pass - all data
             tracks_recon, mu, logvar = model(tracks)
 
             # Note: here total val loss assumes no annealing
             this_loss, recon_loss, kl_divergence = loss(tracks_recon, tracks, mu, logvar,
                                                         annealing_factor=0.0 if args.no_kl else 1.0)
-        total_loss += this_loss
-        n_elbo_terms += 1
 
-        # All data - F1 score
-        tracks_np = tracks.detach().cpu().numpy().flatten().astype(np.bool)
-        tracks_recon_np = tracks_recon.detach().cpu().numpy().flatten() > 0
-        f1 = f1_score(tracks_np, tracks_recon_np)
+            total_loss += this_loss
+            n_elbo_terms += 1
 
-        meters['loss'].update(total_loss, batch_size)
-        meters['recon_loss'].update(recon_loss, batch_size)
-        meters['kl_divergence'].update(kl_divergence, batch_size)
-        meters['f1'].update(f1, batch_size)
+            # All data - F1 score
+            if report_f1:
+                f1 = fast_f1(tracks.type(torch.ByteTensor),
+                             (tracks_recon > 0).type(torch.ByteTensor))
+                meters['f1'].update(f1, batch_size)
 
-    metrics = compute_metrics(meters)
-    print('====> Epoch: {}\tval {}'.format(
-        epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
-    ))
+            meters['loss'].update(total_loss, batch_size)
+            meters['recon_loss'].update(recon_loss, batch_size)
+            meters['kl_divergence'].update(kl_divergence, batch_size)
+
+        metrics = compute_metrics(meters)
+        if not report_f1:
+            metrics['f1'] = float('nan')
+        print('====> Epoch: {}\tval {}'.format(
+            epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
+        ))
 
     return metrics
 
@@ -163,6 +200,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_workers', type=int, default=4, help='Number of dataloader workers')
     parser.add_argument('--pin_memory', action='store_true', help='Load data into CUDA-pinned memory')
     parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+    parser.add_argument('--f1_interval', type=int, default=5, help='How often to calcaulte f1 score')
     parser.add_argument('--log_interval', type=int, default=100, help='How often to log progress (in batches)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--cuda', action='store_true', help='Enable cuda')
@@ -244,8 +282,10 @@ if __name__ == '__main__':
 
 
     for epoch in range(start_epoch, args.epochs + 1):
-        train_metrics = train(epoch, model, optimizer, loss, dataloaders['train'], args)
-        val_metrics = test(epoch, model, optimizer, loss, dataloaders['val'], args)
+        train_metrics = train(epoch, model, optimizer, loss, dataloaders['train'], args,
+                              report_f1=(epoch % args.f1_interval == 0))
+        val_metrics = test(epoch, model, optimizer, loss, dataloaders['val'], args,
+                           report_f1=(epoch % args.f1_interval == 0))
 
         for metric, value in train_metrics.items():
             metrics['train_{}'.format(metric)].append(value)

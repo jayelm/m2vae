@@ -135,13 +135,9 @@ class ELBOLoss(nn.Module):
         @param annealing_factor: float [default: 1]
                                  Beta - how much to weight the KL regularizer.
         """
-        assert len(recon) == len(data), "must supply ground truth for every modality."
-        n_modalities = len(recon)
-        batch_size = mu.size(0)
+        assert recon.shape[4] == data.shape[4], "must supply ground truth for every modality."
 
-        bce = 0  # reconstruction cost
-        for ix in range(n_modalities):
-            bce += self.bce_loss(recon[ix].view(-1), data[ix].view(-1))
+        bce = self.bce_loss(recon.view(-1), data.view(-1))
         kl_divergence  = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
         elbo = torch.mean(bce + annealing_factor * kl_divergence)
         return elbo, bce, torch.mean(kl_divergence)
