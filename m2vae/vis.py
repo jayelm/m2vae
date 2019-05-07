@@ -54,6 +54,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--data_file', default='data/train_x_lpd_5_phr.npz',
                         help='Cleaned/processed LP5 dataset')
+    parser.add_argument('--hidden_size', default=128, type=int,
+                        help='Hidden size')
     parser.add_argument('--exp_dir', default='exp/debug/',
                         help='Cleaned/processed LP5 dataset')
     parser.add_argument('--cuda', action='store_true',
@@ -93,17 +95,17 @@ if __name__ == '__main__':
 
     def encoder_func():
         bar_encoder = models.ConvBarEncoder()
-        track_encoder = models.RNNTrackEncoder(bar_encoder)
-        muvar_encoder = models.StdMuVarEncoder(track_encoder)
+        track_encoder = models.RNNTrackEncoder(bar_encoder, output_size=args.hidden_size)
+        muvar_encoder = models.StdMuVarEncoder(track_encoder, input_size=args.hidden_size, hidden_size=args.hidden_size)
         return muvar_encoder
 
     def decoder_func():
-        bar_decoder = models.RNNTrackDecoder()
+        bar_decoder = models.RNNTrackDecoder(input_size=args.hidden_size)
         note_decoder = models.ConvBarDecoder(bar_decoder)
         return note_decoder
 
     # Model
-    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=args.n_tracks, hidden_size=256)
+    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=args.n_tracks, hidden_size=args.hidden_size)
 
     # Optimizer
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -132,8 +134,8 @@ if __name__ == '__main__':
         print(f1_score(tracks_np.flatten(), tracks_recon_np.flatten()))
 
         for track, track_recon in zip(tracks_np, tracks_recon_np):
-            track = to_track(track[:, :, :, 1])
-            track_recon = to_track(track_recon[:, :, :, 1])
+            track = to_track(track[:, :, :, 0])
+            track_recon = to_track(track_recon[:, :, :, 0])
 
             plot_track(track)
             plot_track(track_recon)
