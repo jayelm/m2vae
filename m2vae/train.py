@@ -122,7 +122,7 @@ def train(epoch, model, optimizer, loss, dataloader, args,
 
     metrics = compute_metrics(meters)
     if not report_f1:
-        metrics['f1'] = float('nan')
+        metrics['f1'] = -1.0
     print('====> Epoch: {}\ttrain {}'.format(
         epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
     ))
@@ -169,7 +169,7 @@ def test(epoch, model, optimizer, loss, dataloader, args,
 
         metrics = compute_metrics(meters)
         if not report_f1:
-            metrics['f1'] = float('nan')
+            metrics['f1'] = -1.0
         print('====> Epoch: {}\tval {}'.format(
             epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
         ))
@@ -196,10 +196,11 @@ if __name__ == '__main__':
     parser.add_argument('--n_tracks', type=int, default=5, help='Number of tracks (between 1 and 5 inclusive)')
     parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
     parser.add_argument('--annealing_epochs', type=int, default=20, help='Annealing epochs')
+    parser.add_argument('--kl_factor', type=float, default=0.01, help='Constant weight on KL divergence')
     parser.add_argument('--resume', action='store_true', help='Try to resume from checkpoint')
     parser.add_argument('--n_workers', type=int, default=4, help='Number of dataloader workers')
     parser.add_argument('--pin_memory', action='store_true', help='Load data into CUDA-pinned memory')
-    parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate')
+    parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
     parser.add_argument('--f1_interval', type=int, default=5, help='How often to calcaulte f1 score')
     parser.add_argument('--log_interval', type=int, default=100, help='How often to log progress (in batches)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
@@ -255,7 +256,8 @@ if __name__ == '__main__':
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
     # Loss
-    loss = mvae.ELBOLoss(pos_weight = torch.tensor(1 / pos_prop))
+    loss = mvae.ELBOLoss(pos_weight=torch.tensor(1 / pos_prop),
+                         kl_factor=args.kl_factor)
 
     if args.cuda:
         model = model.cuda()
