@@ -33,8 +33,11 @@ def save_checkpoint(state, is_best, exp_dir, filename='checkpoint.pth'):
                         os.path.join(exp_dir, 'model_best.pth'))
 
 
-def load_checkpoint(exp_dir, filename='checkpoint.pth'):
-    return torch.load(os.path.join(exp_dir, filename))
+def load_checkpoint(exp_dir, filename='checkpoint.pth',
+                    cuda=False):
+    device = 'gpu' if cuda else 'cpu'
+    return torch.load(os.path.join(exp_dir, filename),
+                      map_location=device)
 
 
 def load_args(exp_dir, filename='args.json'):

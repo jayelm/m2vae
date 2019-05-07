@@ -1,0 +1,96 @@
+---
+title: "Metrics analysis"
+output: html_notebook
+---
+
+```{r setup}
+library(tidyverse)
+library(cowplot)
+library(jsonlite)
+```
+
+# Standard eval
+
+```{r}
+read_metrics <- function(models) {
+  if (is.null(names(models))) {
+    names(models) <- models
+  }
+  
+  metrics <- sapply(names(models), function(model) {
+    metrics_file <- paste0('../exp/', model, '/metrics.json')
+    metrics_df <- as.data.frame(read_json(metrics_file, simplifyVector = TRUE)) %>%
+      tbl_df %>%
+      mutate(epoch = 1:n()) %>%
+      mutate(model = models[model])
+  }, simplify = FALSE) %>%
+    do.call(rbind, .) %>%
+    mutate(model = factor(model))
+  
+  metrics_long <- metrics %>%
+    gather('metric', 'value', -epoch, -model) %>%
+    filter(!(metric %in% c('best_epoch', 'best_loss', 'current_epoch'))) %>%
+    mutate(value = ifelse(value == -1.0, NA, value)) %>%
+    filter(!is.na(value))
+  
+  metrics_long
+}
+
+plot_metrics <- function(models, min_epoch = 0) {
+  metrics <- read_metrics(models) %>%
+    filter(epoch >= min_epoch)
+  ggplot(metrics, aes(x = epoch, y = value, color = model)) +
+    geom_line() +
+    facet_wrap(~ metric, scales = 'free_y') + 
+    xlab('Epoch') +
+    ylab('Value')
+}
+```
+
+```{r}
+plot_metrics(c(
+'debug_1e-4'
+  ))
+```
+
+```{r fig.width=5}
+plot_metrics(c(
+'1track_debug_10000_500_0.01klfactor'
+  ))
+```
+
+```{r fig.height=2, fig.width=3.5}
+# THIS IS NOISE
+asdf <- data.frame(
+  acc = c(52.7, 59.1, 49.0, 52.5, 61.6, 51.6, 54.4, 64.7, 52.1, 56.9, 64.6, 52.2, 57.6, 64.3, 58.9),
+  rel_imp = c(52.7 / 52.7, 59.1 / 52.7, 49.0 / 52.7,
+              52.5 / 52.5, 61.6 / 52.5, 51.6 / 52.5,
+              54.4 / 54.4, 64.7 / 54.4, 52.1 / 54.4,
+              56.9 / 56.9, 64.6 / 56.9, 52.2 / 56.9,
+              57.6 / 57.6, 64.3 / 57.6, 58.9 / 57.6),
+  model = rep(c('Meta', '+Lang', 'L3'), 5),
+  class_noise = rep(c(100, 75, 50, 25, 0), each = 3)
+)
+ggplot(asdf, aes(x = class_noise, y = rel_imp, color = model)) +
+  geom_line() +
+  geom_point() +
+  xlab('Class noise %') +
+  ylab('Acc') +
+  ggtitle('Precomputed VGG16 + 0.005ε')
+```
+
+
+```{r fig.height=2, fig.width=3.5}
+# Convnet
+asdf <- data.frame(
+  acc = c(49.0, 58.3, 56.9, 49.8, 60.6, 63.9, 52.2, 61.6, 65.2),
+  model = rep(c('Meta', '+Lang', 'L3'), 3),
+  class_noise = rep(c(100, 50, 0), each = 3)
+)
+ggplot(asdf, aes(x = class_noise, y = acc, color = model)) +
+  geom_line() +
+  geom_point() +
+  xlab('Class noise %') +
+  ylab('Acc') +
+  ggtitle('Learned Conv4 + 0.01ε')
+```
