@@ -1,4 +1,5 @@
 data/train_x_lpd_5_phr.npz
+data/train_x_lpd_5_phr_durations.npz
 
 # ==== DEFAULT PYTHON STUFF ====
 # Byte-compiled / optimized / DLL files

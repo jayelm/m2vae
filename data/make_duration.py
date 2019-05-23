@@ -77,8 +77,6 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    print("Note: this script requires at least 16GB of memory")
-
     with np.load('train_x_lpd_5_phr.npz') as f:
         data = np.zeros(f['shape'], np.uint8)
         data[[x for x in f['nonzero']]] = 1
