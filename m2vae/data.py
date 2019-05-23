@@ -11,20 +11,25 @@ from sklearn.model_selection import train_test_split
 def load_data_from_npz(filename):
     """Load and return the training data from a npz file (sparse format)."""
     with np.load(filename) as f:
-        data = np.zeros(f['shape'], np.bool_)
-        data[[x for x in f['nonzero']]] = True
+        data = np.zeros(f['shape'], np.uint8)
+        data[[x for x in f['nonzero']]] = 1
     return data
 
 
 def random_transpose(pianoroll):
-    """Randomly transpose a pianoroll with [-5, 6] semitones."""
+    """
+    Randomly transpose a pianoroll with [-5, 6] semitones.
+    Input:
+    pianoroll: torch.Tensor of shape (n_bars, n_timesteps, n_pitches, n_tracks)
+    """
     semitone = np.random.randint(-5, 6)
     if semitone > 0:
-        pianoroll[:, semitone:, 1:] = pianoroll[:, :-semitone, 1:]
-        pianoroll[:, :semitone, 1:] = 0
+        # 1: skips drums
+        pianoroll[:, :, semitone:, 1:] = pianoroll[:, :, :-semitone, 1:]
+        pianoroll[:, :, :semitone, 1:] = 0
     elif semitone < 0:
-        pianoroll[:, :semitone, 1:] = pianoroll[:, -semitone:, 1:]
-        pianoroll[:, semitone:, 1:] = 0
+        pianoroll[:, :, :semitone, 1:] = pianoroll[:, :, -semitone:, 1:]
+        pianoroll[:, :, semitone:, 1:] = 0
     return pianoroll
 
 

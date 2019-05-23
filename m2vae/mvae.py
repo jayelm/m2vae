@@ -19,12 +19,14 @@ class MVAE(nn.Module):
     def __init__(self,
                  encoder_func,
                  decoder_func,
-                 n_tracks=5, hidden_size=256):
+                 n_tracks=5, hidden_size=256,
+                 durations=False):
         super(MVAE, self).__init__()
         self.encoders = nn.ModuleList([encoder_func() for _ in range(n_tracks)])
         self.decoders = nn.ModuleList([decoder_func() for _ in range(n_tracks)])
         self.n_tracks = n_tracks
         self.hidden_size = hidden_size
+        self.durations = durations
         self.experts = ProductOfExperts()
 
     def reparametrize(self, mu, logvar):
@@ -118,9 +120,12 @@ class ELBOLoss(nn.Module):
     """
     ELBO Loss for MVAE
     """
-    def __init__(self, pos_weight=None, kl_factor=0.01):
+    def __init__(self, pos_weight=None, kl_factor=0.01, mse_factor=0.00):
         super(ELBOLoss, self).__init__()
         self.bce_loss = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight]))
+        self.mse_factor = mse_factor
+        if self.mse_factor > 0:
+            self.mse_loss = nn.MSELoss()
         self.kl_factor = kl_factor
 
     def forward(self, recon, data, mu, logvar, annealing_factor=1.0):
@@ -137,9 +142,27 @@ class ELBOLoss(nn.Module):
                                  Beta - how much to weight the KL regularizer.
         """
         assert recon.shape[4] == data.shape[4], "must supply ground truth for every modality."
+        batch_size = recon.shape[0]
+        n_bars = recon.shape[1]
+        n_tracks = recon.shape[4]
 
-        bce = self.bce_loss(recon.view(-1), data.view(-1))
+        recon_2d = recon.view(batch_size, -1)
+        data_2d = data.view(batch_size, -1)
+
+        # ==== RECONSTRUCTION LOSS ====
+        # Binary cross entropy
+        bce = self.bce_loss(recon_2d, data_2d)
+        recon_loss = bce
+        # Mean squared error
+        if self.mse_factor > 0:
+            recon_bar_major = recon.permute(0, 4, 1, 2, 3).contiguous().view(batch_size * n_bars * n_tracks, -1)
+            data_bar_major = data.permute(0, 4, 1, 2, 3).contiguous().view(batch_size * n_bars * n_tracks, -1)
+
+            recon_bar_major_values = torch.sigmoid(recon_bar_major)
+            mse = self.mse_loss(recon_bar_major_values, data_bar_major)
+            recon_loss = recon_loss + (self.mse_factor * mse)
+        # ==== KL DIVERGENCE ====
         kl_divergence  = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
         kl_divergence = kl_divergence.mean()
-        elbo = bce + self.kl_factor * annealing_factor * kl_divergence
-        return elbo, bce, kl_divergence
+        elbo = recon_loss + self.kl_factor * annealing_factor * kl_divergence
+        return elbo, recon_loss, kl_divergence

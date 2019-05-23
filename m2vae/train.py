@@ -5,6 +5,7 @@ Train the M2VAE
 import os
 import sys
 from collections import defaultdict
+from datetime import datetime
 
 import torch
 from torch.utils.data import DataLoader
@@ -63,9 +64,9 @@ def compute_kl_annealing_factor(batch, epoch, n_batches, annealing_epochs):
             float(annealing_epochs * n_batches))
 
 
-def train(epoch, model, optimizer, loss, dataloader, args,
-          report_f1=False):
+def train(epoch, model, optimizer, loss, dataloader, args):
     model.train()
+    report_f1 = (epoch % args.f1_interval == 0)
     if report_f1:
         meters = init_meters('loss', 'annealing_factor', 'recon_loss', 'kl_divergence', 'f1')
     else:
@@ -116,22 +117,23 @@ def train(epoch, model, optimizer, loss, dataloader, args,
         optimizer.step()
 
         if i % args.log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tAnnealing-Factor: {:.3f}'.format(
+            print('{} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tAnnealing-Factor: {:.3f}'.format(
                 epoch, i * batch_size, len(dataloader.dataset),
                 100. * i / len(dataloader), meters['loss'].avg, annealing_factor))
 
     metrics = compute_metrics(meters)
     if not report_f1:
         metrics['f1'] = -1.0
-    print('====> Epoch: {}\ttrain {}'.format(
-        epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
+    dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print('{} Epoch: {}\ttrain {}'.format(
+        dt, epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
     ))
     return metrics
 
 
-def test(epoch, model, optimizer, loss, dataloader, args,
-         report_f1=False):
+def test(epoch, model, optimizer, loss, dataloader, args):
     model.eval()
+    report_f1 = (epoch % args.f1_interval == 0)
     if report_f1:
         meters = init_meters('loss', 'recon_loss', 'kl_divergence', 'f1')
     else:
@@ -170,8 +172,9 @@ def test(epoch, model, optimizer, loss, dataloader, args,
         metrics = compute_metrics(meters)
         if not report_f1:
             metrics['f1'] = -1.0
-        print('====> Epoch: {}\tval {}'.format(
-            epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
+        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print('{} Epoch: {}\tval {}'.format(
+            dt, epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
         ))
 
     return metrics
@@ -187,21 +190,25 @@ if __name__ == '__main__':
     parser.add_argument('--data_file', default='data/train_x_lpd_5_phr.npz',
                         help='Cleaned/processed LP5 dataset')
     parser.add_argument('--exp_dir', default='exp/debug/',
-                        help='Cleaned/processed LP5 dataset')
+                        help='Experiment directory')
     parser.add_argument('--activation', default='relu', choices=['swish', 'lrelu', 'relu'],
                         help='Nonlinear activation in encoders/decoders')
-    parser.add_argument('--hidden_size', type=int, default=128, help='Hidden size of multitrack embeddings')
+    parser.add_argument('--durations', action='store_true', help='Train the model where hits/durations predicted separately')
+    parser.add_argument('--hits_only', action='store_true', help='Predict hits only in the durations model')
+    parser.add_argument('--hidden_size', type=int, default=256, help='Hidden size of multitrack embeddings')
     parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
     parser.add_argument('--no_kl', action='store_true', help="Don't use KL (vanilla autoencoder)")
     parser.add_argument('--n_tracks', type=int, default=5, help='Number of tracks (between 1 and 5 inclusive)')
-    parser.add_argument('--epochs', type=int, default=100, help='Training epochs')
-    parser.add_argument('--annealing_epochs', type=int, default=20, help='Annealing epochs')
+    parser.add_argument('--epochs', type=int, default=1000, help='Training epochs')
+    parser.add_argument('--annealing_epochs', type=int, default=250, help='Annealing epochs')
+    parser.add_argument('--mse_factor', type=float, default=0.00, help='Weight on MSE loss')
     parser.add_argument('--kl_factor', type=float, default=0.01, help='Constant weight on KL divergence')
+    parser.add_argument('--max_train', type=int, default=None, help='Maximum training examples to train on')
     parser.add_argument('--resume', action='store_true', help='Try to resume from checkpoint')
     parser.add_argument('--n_workers', type=int, default=4, help='Number of dataloader workers')
     parser.add_argument('--pin_memory', action='store_true', help='Load data into CUDA-pinned memory')
-    parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
-    parser.add_argument('--f1_interval', type=int, default=5, help='How often to calcaulte f1 score')
+    parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
+    parser.add_argument('--f1_interval', type=int, default=5, help='How often to calculate f1 score')
     parser.add_argument('--log_interval', type=int, default=100, help='How often to log progress (in batches)')
     parser.add_argument('--seed', type=int, default=42, help='Random seed')
     parser.add_argument('--cuda', action='store_true', help='Enable cuda')
@@ -209,8 +216,14 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    if args.hits_only and not args.durations:
+        parser.error('--hits_only requires --durations')
+
     if args.n_tracks < 1 or args.n_tracks > 5:
         parser.error('--n_tracks must be between 1 and 5 inclusive')
+
+    if args.durations and 'durations' not in args.data_file:
+        parser.error('Load the durations datafile to run durations model')
 
     # Make experiment directory
     resumable = args.resume and util.is_resumable(args.exp_dir)
@@ -221,10 +234,21 @@ if __name__ == '__main__':
     # Seed
     random = np.random.RandomState(args.seed)
 
-    if args.debug:
-        lpd_raw = np.load(args.data_file.replace('.npz', '_debug.npz'))['arr_0']
+    lpd_file = args.data_file
+    if args.debug and 'debug' not in lpd_file:
+        lpd_file = lpd_file.replace('.npz', '_debug.npz')
+
+    if args.debug or args.durations:
+        lpd_raw = np.load(lpd_file)['arr_0']
     else:
-        lpd_raw = data.load_data_from_npz(args.data_file)
+        lpd_raw = data.load_data_from_npz(lpd_file)
+
+    if args.hits_only:
+        lpd_raw = lpd_raw > 0
+
+    if args.max_train is not None:
+        lpd_raw = lpd_raw[:args.max_train]
+
     # Calcualte mean positive weight
     pos_prop = lpd_raw.mean()
     lpds = data.train_val_test_split(lpd_raw, random_state=random)
@@ -257,7 +281,8 @@ if __name__ == '__main__':
 
     # Loss
     loss = mvae.ELBOLoss(pos_weight=torch.tensor(1 / pos_prop),
-                         kl_factor=args.kl_factor)
+                         kl_factor=args.kl_factor,
+                         mse_factor=args.mse_factor)
 
     if args.cuda:
         model = model.cuda()
@@ -274,6 +299,7 @@ if __name__ == '__main__':
         print("Resuming from epoch {}".format(metrics['current_epoch']))
     else:
         metrics = defaultdict(list)
+        metrics['best_f1'] = -10
         metrics['best_loss'] = float('inf')
         metrics['best_epoch'] = 0
         start_epoch = 1
@@ -284,10 +310,8 @@ if __name__ == '__main__':
 
 
     for epoch in range(start_epoch, args.epochs + 1):
-        train_metrics = train(epoch, model, optimizer, loss, dataloaders['train'], args,
-                              report_f1=(epoch % args.f1_interval == 0))
-        val_metrics = test(epoch, model, optimizer, loss, dataloaders['val'], args,
-                           report_f1=(epoch % args.f1_interval == 0))
+        train_metrics = train(epoch, model, optimizer, loss, dataloaders['train'], args)
+        val_metrics = test(epoch, model, optimizer, loss, dataloaders['val'], args)
 
         for metric, value in train_metrics.items():
             metrics['train_{}'.format(metric)].append(value)
@@ -295,9 +319,10 @@ if __name__ == '__main__':
             metrics['val_{}'.format(metric)].append(value)
         metrics['current_epoch'] = epoch
 
-        is_best = train_metrics['loss'] < metrics['best_loss']
+        is_best = val_metrics['f1'] > metrics['best_f1']
         if is_best:
-            metrics['best_loss'] = train_metrics['loss']
+            metrics['best_f1'] = val_metrics['f1']
+            metrics['best_loss'] = val_metrics['loss']
             metrics['best_epoch'] = epoch
 
         # Save model

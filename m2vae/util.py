@@ -47,7 +47,7 @@ def load_args(exp_dir, filename='args.json'):
 
 def save_args(args, exp_dir, filename='args.json'):
     with open(os.path.join(exp_dir, filename), 'w') as f:
-        json.dump(vars(args), f)
+        json.dump(vars(args), f, indent=4, separators=(',', ': '), sort_keys=True)
 
 
 def load_metrics(exp_dir, filename='metrics.json'):
