@@ -100,8 +100,8 @@ if __name__ == '__main__':
         #  raise Exception
 
         for track, track_recon in zip(tracks_np, tracks_recon_np):
-            track = to_track(track[:, :, :, 4])
-            track_recon = to_track(track_recon[:, :, :, 4])
+            track = to_track(track[:, :, :, 0])
+            track_recon = to_track(track_recon[:, :, :, 0])
 
             f, axarr = plt.subplots(ncols=2, figsize=(20, 4))
 

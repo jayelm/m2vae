@@ -52,7 +52,8 @@ def parse_args(script, desc=''):
     args = parser.parse_args()
 
     # Checks
-    if args.n_tracks < 1 or args.n_tracks > 5:
-        parser.error('--n_tracks must be between 1 and 5 inclusive')
+    if script == 'train':
+        if args.n_tracks < 1 or args.n_tracks > 5:
+            parser.error('--n_tracks must be between 1 and 5 inclusive')
 
     return args

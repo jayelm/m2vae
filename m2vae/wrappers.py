@@ -51,7 +51,7 @@ def build_mvae(args, pos_prop=1):
     def encoder_func():
         bar_encoder = models.ConvBarEncoder()
         track_encoder = models.RNNTrackEncoder(bar_encoder, output_size=args.hidden_size)
-        muvar_encoder = models.StdMuVarEncoder(track_encoder, input_size=args.hidden_size, hidden_size=args.hidden_size)
+        muvar_encoder = models.StdMuVarEncoder(track_encoder, input_size=args.hidden_size, hidden_size=args.hidden_size, output_size=args.hidden_size)
         return muvar_encoder
 
     def decoder_func():
