@@ -59,7 +59,8 @@ if __name__ == '__main__':
     # Seed
     random = np.random.RandomState(args.seed)
 
-    dataloaders, pos_prop = wrappers.load_data(args, random_state=random)
+    dataloaders, pos_prop = wrappers.load_data(args, random_state=random,
+                                               use_random_transpose=False)
     model, optimizer, loss = wrappers.build_mvae(args, pos_prop=pos_prop)
 
     util.restore_checkpoint(model, optimizer, args.exp_dir,

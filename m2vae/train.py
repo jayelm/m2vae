@@ -200,7 +200,8 @@ if __name__ == '__main__':
     # Seed
     random = np.random.RandomState(args.seed)
 
-    dataloaders, pos_prop = wrappers.load_data(args, random_state=random)
+    dataloaders, pos_prop = wrappers.load_data(args, random_state=random,
+                                               use_random_transpose=True)
     model, optimizer, loss = wrappers.build_mvae(args, pos_prop=pos_prop)
 
     # If resume, load metrics; otherwise init metrics

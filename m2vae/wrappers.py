@@ -13,7 +13,7 @@ import mvae
 import data
 
 
-def load_data(args, random_state=None):
+def load_data(args, random_state=None, use_random_transpose=False):
     lpd_file = args.data_file
     if args.debug and 'debug' not in lpd_file:
         lpd_file = lpd_file.replace('.npz', '_debug.npz')
@@ -34,7 +34,7 @@ def load_data(args, random_state=None):
     # Calcualte mean positive weight
     pos_prop = lpd_raw.mean()
     lpds = data.train_val_test_split(lpd_raw, random_state=random_state,
-                                     use_random_transpose=False)
+                                     use_random_transpose=use_random_transpose)
     del lpd_raw
     dataloaders = {}
     for split, dataset in lpds.items():
