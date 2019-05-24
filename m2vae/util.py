@@ -40,6 +40,23 @@ def load_checkpoint(exp_dir, filename='checkpoint.pth',
                       map_location=device)
 
 
+def restore_checkpoint(model, optimizer, exp_dir, filename='checkpoint.pth',
+                       cuda=False):
+    ckpt = load_checkpoint(exp_dir, filename=filename, cuda=cuda)
+    model.load_state_dict(ckpt['state_dict'])
+    optimizer.load_state_dict(ckpt['optimizer'])
+
+
+def restore_args(args, exp_dir):
+    if not os.path.exists(args.exp_dir):
+        raise RuntimeError("Can't find {}".format(args.exp_Dir))
+
+    exp_args = load_args(args.exp_dir)
+    for arg, val in exp_args.items():
+        if not arg in args:
+            args.__setattr__(arg, val)
+
+
 def load_args(exp_dir, filename='args.json'):
     with open(os.path.join(exp_dir, filename), 'r') as f:
         return json.load(f)

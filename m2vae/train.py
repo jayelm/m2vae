@@ -1,5 +1,5 @@
 """
-Train the M2VAE
+Train an m2vae model.
 """
 
 import os
@@ -8,8 +8,6 @@ from collections import defaultdict
 from datetime import datetime
 
 import torch
-from torch.utils.data import DataLoader
-import torch.optim as optim
 
 import numpy as np
 from tqdm import tqdm
@@ -18,6 +16,8 @@ import data
 import mvae
 import models
 import util
+import io_util
+import wrappers
 
 
 def fast_f1(true, pred):
@@ -47,6 +47,14 @@ def fast_f1(true, pred):
 def init_meters(*metrics):
     """Return an averagemeter for each metric passed"""
     return {m: util.AverageMeter() for m in metrics}
+
+
+def init_metrics():
+    metrics = defaultdict(list)
+    metrics['best_f1'] = -10
+    metrics['best_loss'] = float('inf')
+    metrics['best_epoch'] = 0
+    return metrics
 
 
 def compute_metrics(meters):
@@ -181,49 +189,7 @@ def test(epoch, model, optimizer, loss, dataloader, args):
 
 
 if __name__ == '__main__':
-    from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
-
-    parser = ArgumentParser(
-        description='Train M2VAE',
-        formatter_class=ArgumentDefaultsHelpFormatter)
-
-    parser.add_argument('--data_file', default='data/train_x_lpd_5_phr.npz',
-                        help='Cleaned/processed LP5 dataset')
-    parser.add_argument('--exp_dir', default='exp/debug/',
-                        help='Experiment directory')
-    parser.add_argument('--activation', default='relu', choices=['swish', 'lrelu', 'relu'],
-                        help='Nonlinear activation in encoders/decoders')
-    parser.add_argument('--durations', action='store_true', help='Train the model where hits/durations predicted separately')
-    parser.add_argument('--hits_only', action='store_true', help='Predict hits only in the durations model')
-    parser.add_argument('--hidden_size', type=int, default=256, help='Hidden size of multitrack embeddings')
-    parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
-    parser.add_argument('--no_kl', action='store_true', help="Don't use KL (vanilla autoencoder)")
-    parser.add_argument('--n_tracks', type=int, default=5, help='Number of tracks (between 1 and 5 inclusive)')
-    parser.add_argument('--epochs', type=int, default=1000, help='Training epochs')
-    parser.add_argument('--annealing_epochs', type=int, default=250, help='Annealing epochs')
-    parser.add_argument('--mse_factor', type=float, default=1.00, help='Weight on MSE loss')
-    parser.add_argument('--kl_factor', type=float, default=0.001, help='Constant weight on KL divergence')
-    parser.add_argument('--max_train', type=int, default=None, help='Maximum training examples to train on')
-    parser.add_argument('--resume', action='store_true', help='Try to resume from checkpoint')
-    parser.add_argument('--n_workers', type=int, default=4, help='Number of dataloader workers')
-    parser.add_argument('--pin_memory', action='store_true', help='Load data into CUDA-pinned memory')
-    parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate')
-    parser.add_argument('--f1_interval', type=int, default=5, help='How often to calculate f1 score')
-    parser.add_argument('--log_interval', type=int, default=100, help='How often to log progress (in batches)')
-    parser.add_argument('--seed', type=int, default=42, help='Random seed')
-    parser.add_argument('--cuda', action='store_true', help='Enable cuda')
-    parser.add_argument('--debug', action='store_true', help='Load tiny data file')
-
-    args = parser.parse_args()
-
-    if args.hits_only and not args.durations:
-        parser.error('--hits_only requires --durations')
-
-    if args.n_tracks < 1 or args.n_tracks > 5:
-        parser.error('--n_tracks must be between 1 and 5 inclusive')
-
-    if args.durations and 'durations' not in args.data_file:
-        parser.error('Load the durations datafile to run durations model')
+    args = io_util.parse_args('train', desc=__doc__)
 
     # Make experiment directory
     resumable = args.resume and util.is_resumable(args.exp_dir)
@@ -234,80 +200,23 @@ if __name__ == '__main__':
     # Seed
     random = np.random.RandomState(args.seed)
 
-    lpd_file = args.data_file
-    if args.debug and 'debug' not in lpd_file:
-        lpd_file = lpd_file.replace('.npz', '_debug.npz')
-
-    if args.debug or args.durations:
-        lpd_raw = np.load(lpd_file)['arr_0']
-    else:
-        lpd_raw = data.load_data_from_npz(lpd_file)
-
-    if args.hits_only:
-        lpd_raw = lpd_raw > 0
-
-    if args.max_train is not None:
-        lpd_raw = lpd_raw[:args.max_train]
-
-    # Calcualte mean positive weight
-    pos_prop = lpd_raw.mean()
-    lpds = data.train_val_test_split(lpd_raw, random_state=random)
-    del lpd_raw
-    dataloaders = {}
-    for split, dataset in lpds.items():
-        dataloaders[split] = DataLoader(
-            dataset,
-            batch_size=args.batch_size,
-            num_workers=args.n_workers, shuffle=True,
-            pin_memory=args.pin_memory
-        )
-
-    def encoder_func():
-        bar_encoder = models.ConvBarEncoder()
-        track_encoder = models.RNNTrackEncoder(bar_encoder, output_size=args.hidden_size)
-        muvar_encoder = models.StdMuVarEncoder(track_encoder, input_size=args.hidden_size, hidden_size=args.hidden_size, output_size=args.hidden_size)
-        return muvar_encoder
-
-    def decoder_func():
-        bar_decoder = models.RNNTrackDecoder(input_size=args.hidden_size)
-        note_decoder = models.ConvBarDecoder(bar_decoder)
-        return note_decoder
-
-    # Model
-    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=args.n_tracks, hidden_size=args.hidden_size)
-
-    # Optimizer
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
-
-    # Loss
-    loss = mvae.ELBOLoss(pos_weight=torch.tensor(1 / pos_prop),
-                         kl_factor=args.kl_factor,
-                         mse_factor=args.mse_factor)
-
-    if args.cuda:
-        model = model.cuda()
-        loss = loss.cuda()
+    dataloaders, pos_prop = wrappers.load_data(args, random_state=random)
+    model, optimizer, loss = wrappers.build_mvae(args, pos_prop=pos_prop)
 
     # If resume, load metrics; otherwise init metrics
     if resumable:
-        ckpt = util.load_checkpoint(args.exp_dir)
-        model.load_state_dict(ckpt['state_dict'])
-        optimizer.load_state_dict(ckpt['optimizer'])
+        util.restore_checkpoint(model, optimizer, args.exp_dir)
 
         metrics = util.load_metrics(args.exp_dir)
         start_epoch = metrics['current_epoch'] + 1
         print("Resuming from epoch {}".format(metrics['current_epoch']))
     else:
-        metrics = defaultdict(list)
-        metrics['best_f1'] = -10
-        metrics['best_loss'] = float('inf')
-        metrics['best_epoch'] = 0
+        metrics = init_metrics()
         start_epoch = 1
 
     if start_epoch > args.epochs:
         raise RuntimeError("start_epoch {} > total epochs {}".format(
             start_epoch, args.epochs))
-
 
     for epoch in range(start_epoch, args.epochs + 1):
         train_metrics = train(epoch, model, optimizer, loss, dataloaders['train'], args)

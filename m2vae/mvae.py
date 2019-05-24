@@ -37,7 +37,7 @@ class MVAE(nn.Module):
         else:  # return mean during inference
             return mu
 
-    def forward(self, tracks):
+    def forward(self, tracks, return_z=False):
         """Forward pass through the MVAE.
 
         @param tracks: list of ?PyTorch.Tensors
@@ -50,7 +50,10 @@ class MVAE(nn.Module):
         z = self.reparametrize(mu, logvar)
         # reconstruct inputs based on that gaussian
         tracks_recon = self.decode(z)
-        return tracks_recon, mu, logvar
+        if return_z:
+            return tracks_recon, z
+        else:
+            return tracks_recon, mu, logvar
 
     def encode(self, tracks):
         assert tracks.shape[-1] == self.n_tracks

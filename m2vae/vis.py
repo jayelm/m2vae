@@ -1,5 +1,5 @@
 """
-Train the M2VAE
+Visualize a trained m2vae model.
 """
 
 import os
@@ -7,20 +7,27 @@ import sys
 from collections import defaultdict
 
 import torch
-from torch.utils.data import DataLoader
-import torch.optim as optim
 
 import numpy as np
 from sklearn.metrics import f1_score
 from tqdm import tqdm
+from scipy.interpolate import interp1d
 
-from pypianoroll import Track
+from pypianoroll import Track, plot_pianoroll
 import matplotlib.pyplot as plt
 
 import data
 import mvae
 import models
 import util
+import io_util
+import wrappers
+
+
+def interpolate(mu1, mu2, steps=3, method='linear'):
+    all_steps = list(range(1, steps + 1))
+    linfit = interp1d([1, steps + 1], np.vstack([mu1, mu2]), axis=0)
+    return linfit(all_steps)
 
 
 def to_track(track_np, is_drum=False, name='piano'):
@@ -46,98 +53,63 @@ def plot_track(track):
 
 
 if __name__ == '__main__':
-    from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
-
-    parser = ArgumentParser(
-        description='Visualize M2VAE',
-        formatter_class=ArgumentDefaultsHelpFormatter)
-
-    parser.add_argument('--data_file', default='data/train_x_lpd_5_phr.npz',
-                        help='Cleaned/processed LP5 dataset')
-    parser.add_argument('--hidden_size', default=128, type=int,
-                        help='Hidden size')
-    parser.add_argument('--exp_dir', default='exp/debug/',
-                        help='Cleaned/processed LP5 dataset')
-    parser.add_argument('--cuda', action='store_true',
-                        help='Use cuda')
-    parser.add_argument('--debug', action='store_true',
-                        help='Load shortened version')
-
-    args = parser.parse_args()
-
-    if not os.path.exists(args.exp_dir):
-        raise RuntimeError("Can't find {}".format(args.exp_Dir))
-
-    exp_args = util.load_args(args.exp_dir)
-    for arg, val in exp_args.items():
-        if not arg in args:
-            args.__setattr__(arg, val)
+    args = io_util.parse_args('vis', desc=__doc__)
+    util.restore_args(args, args.exp_dir)
 
     # Seed
     random = np.random.RandomState(args.seed)
 
-    if args.debug:
-        lpd_raw = np.load(args.data_file.replace('.npz', '_debug.npz'))['arr_0']
-    else:
-        lpd_raw = data.load_data_from_npz(args.data_file)
-    # Calcualte mean positive weight
-    pos_prop = lpd_raw.mean()
-    lpds = data.train_val_test_split(lpd_raw, random_state=random)
-    del lpd_raw
-    dataloaders = {}
-    for split, dataset in lpds.items():
-        dataloaders[split] = DataLoader(
-            dataset,
-            batch_size=args.batch_size,
-            num_workers=args.n_workers, shuffle=True,
-            pin_memory=args.pin_memory
-        )
+    dataloaders, pos_prop = wrappers.load_data(args, random_state=random)
+    model, optimizer, loss = wrappers.build_mvae(args, pos_prop=pos_prop)
 
-    def encoder_func():
-        bar_encoder = models.ConvBarEncoder()
-        track_encoder = models.RNNTrackEncoder(bar_encoder, output_size=args.hidden_size)
-        muvar_encoder = models.StdMuVarEncoder(track_encoder, input_size=args.hidden_size, hidden_size=args.hidden_size)
-        return muvar_encoder
-
-    def decoder_func():
-        bar_decoder = models.RNNTrackDecoder(input_size=args.hidden_size)
-        note_decoder = models.ConvBarDecoder(bar_decoder)
-        return note_decoder
-
-    # Model
-    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=args.n_tracks, hidden_size=args.hidden_size)
-
-    # Optimizer
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
-
-    loss = mvae.ELBOLoss(pos_weight = torch.tensor(1 / pos_prop))
-
-    if args.cuda:
-        model = model.cuda()
-        loss = loss.cuda()
-
-    ckpt = util.load_checkpoint(args.exp_dir,
-                                cuda=args.cuda,
-                                filename='model_best.pth')
-    model.load_state_dict(ckpt['state_dict'])
-    optimizer.load_state_dict(ckpt['optimizer'])
+    util.restore_checkpoint(model, optimizer, args.exp_dir,
+                            cuda=args.cuda,
+                            filename='model_best.pth')
 
     model.eval()
 
     for i, tracks in enumerate(dataloaders['val']):
         tracks = tracks[:, :, :, :, :args.n_tracks]
-        tracks_recon, mu, logvar = model(tracks)
+        tracks_recon, z = model(tracks, return_z=True)
 
         tracks_np = tracks.detach().cpu().numpy().astype(np.bool)
         tracks_recon_np = (tracks_recon.detach().cpu().numpy() > 0.0)
 
         print(f1_score(tracks_np.flatten(), tracks_recon_np.flatten()))
 
+        #  # Interpolate
+        #  z1 = z[0].detach().cpu().numpy()
+        #  z2 = z[1].detach().cpu().numpy()
+        #  z_interp = interpolate(z1, z2, 5)
+
+        #  f, axarr = plt.subplots(ncols=5, figsize=(20, 4))
+
+        #  for i in range(5):
+            #  if i == 0 or i == 5:
+                #  # Just plot the track
+                #  track = to_track(tracks[0 if i == 0 else 1, :, :, :, 0])
+                #  plot_pianoroll(axarr[i], track.pianoroll)
+            #  else:
+                #  zi = z_interp[i]
+                #  zit = torch.tensor(zi).to(z.device).float().unsqueeze(0)
+                #  track_recon = model.decode(zit).detach().cpu().numpy()
+                #  track_recon = to_track(track_recon[0, :, :, :, 0])
+                #  plot_pianoroll(axarr[i], track_recon.pianoroll)
+
+        #  plt.show()
+        #  raise Exception
+
         for track, track_recon in zip(tracks_np, tracks_recon_np):
-            track = to_track(track[:, :, :, 0])
-            track_recon = to_track(track_recon[:, :, :, 0])
+            track = to_track(track[:, :, :, 4])
+            track_recon = to_track(track_recon[:, :, :, 4])
 
-            plot_track(track)
-            plot_track(track_recon)
+            f, axarr = plt.subplots(ncols=2, figsize=(20, 4))
 
+            axarr[0].set_title('Original')
+            axarr[1].set_title('Reconstructed')
+
+            plot_pianoroll(axarr[0], track.pianoroll)
+            plot_pianoroll(axarr[1], track_recon.pianoroll)
+
+            plt.show()
             x = input('Continue?')
