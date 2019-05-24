@@ -13,8 +13,11 @@ from sklearn.metrics import f1_score
 from tqdm import tqdm
 from scipy.interpolate import interp1d
 
-from pypianoroll import Track, plot_pianoroll
+import pypianoroll as ppr
 import matplotlib.pyplot as plt
+import pretty_midi
+
+from IPython.display import HTML, Audio, display
 
 import data
 import mvae
@@ -22,6 +25,11 @@ import models
 import util
 import io_util
 import wrappers
+
+
+DOWNBEATS = np.array([0, 48, 96, 144])
+DOWNBEATS_ONEHOT = np.zeros(192, dtype=np.bool_)
+DOWNBEATS_ONEHOT[DOWNBEATS] = 1
 
 
 def interpolate(mu1, mu2, steps=3, method='linear'):
@@ -41,8 +49,8 @@ def to_track(track_np, is_drum=False, name='piano'):
     padding_amt = (128 - n_pitches) // 2
     note_padding = np.zeros((tot_timesteps,  padding_amt), dtype=np.bool)
     track_np_flat = np.concatenate((note_padding, track_np_flat, note_padding), axis=1)
-    track = Track(pianoroll=track_np_flat,
-                  is_drum=is_drum, name=name)
+    track = ppr.Track(pianoroll=track_np_flat,
+                      is_drum=is_drum, name=name)
 
     return track
 
@@ -50,6 +58,20 @@ def to_track(track_np, is_drum=False, name='piano'):
 def plot_track(track):
     track.plot()
     plt.show()
+
+
+def synthesize(track):
+    track_mt = ppr.Multitrack(tracks=[track], beat_resolution=12,
+                              downbeat=DOWNBEATS_ONEHOT)
+    track_midi = track_mt.to_pretty_midi()
+    track_audio = track_midi.fluidsynth()
+    return track_audio
+
+
+def ipy_display(audio, title=None):
+    if title is not None:
+        display(HTML('<h2>{}</h2>'.format(title)))
+    display(Audio(audio, rate=44100))
 
 
 if __name__ == '__main__':
@@ -78,28 +100,6 @@ if __name__ == '__main__':
 
         print(f1_score(tracks_np.flatten(), tracks_recon_np.flatten()))
 
-        #  # Interpolate
-        #  z1 = z[0].detach().cpu().numpy()
-        #  z2 = z[1].detach().cpu().numpy()
-        #  z_interp = interpolate(z1, z2, 5)
-
-        #  f, axarr = plt.subplots(ncols=5, figsize=(20, 4))
-
-        #  for i in range(5):
-            #  if i == 0 or i == 5:
-                #  # Just plot the track
-                #  track = to_track(tracks[0 if i == 0 else 1, :, :, :, 0])
-                #  plot_pianoroll(axarr[i], track.pianoroll)
-            #  else:
-                #  zi = z_interp[i]
-                #  zit = torch.tensor(zi).to(z.device).float().unsqueeze(0)
-                #  track_recon = model.decode(zit).detach().cpu().numpy()
-                #  track_recon = to_track(track_recon[0, :, :, :, 0])
-                #  plot_pianoroll(axarr[i], track_recon.pianoroll)
-
-        #  plt.show()
-        #  raise Exception
-
         for track, track_recon in zip(tracks_np, tracks_recon_np):
             track = to_track(track[:, :, :, 0])
             track_recon = to_track(track_recon[:, :, :, 0])
@@ -109,8 +109,8 @@ if __name__ == '__main__':
             axarr[0].set_title('Original')
             axarr[1].set_title('Reconstructed')
 
-            plot_pianoroll(axarr[0], track.pianoroll)
-            plot_pianoroll(axarr[1], track_recon.pianoroll)
+            ppr.plot_pianoroll(axarr[0], track.pianoroll)
+            ppr.plot_pianoroll(axarr[1], track_recon.pianoroll)
 
             plt.show()
             x = input('Continue?')

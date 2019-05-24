@@ -12,6 +12,8 @@ import torch
 import numpy as np
 from tqdm import tqdm
 
+import pretty_midi
+
 import data
 import mvae
 import models

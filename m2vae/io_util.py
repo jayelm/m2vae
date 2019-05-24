@@ -6,9 +6,12 @@ Argparse helpers
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
 
-def parse_args(script, desc=''):
-    if script not in ['vis', 'train']:
+def parse_args(script, desc='', **kwargs):
+    if script not in ['interactive', 'vis', 'train']:
         raise NotImplementedError('script name = {}'.format(script))
+
+    if kwargs and script != 'interactive':
+        raise RuntimeError("Must run interactive to use kwargs")
 
     parser = ArgumentParser(
         description=desc,
@@ -49,7 +52,12 @@ def parse_args(script, desc=''):
         train_parser.add_argument('--f1_interval', type=int, default=5, help='How often to calcaulte f1 score')
         train_parser.add_argument('--log_interval', type=int, default=100, help='How often to log progress (in batches)')
 
-    args = parser.parse_args()
+    if kwargs:
+        args_str = [['--{}'.format(k), str(v)] if v is not True else ['--{}'.format(k)] for k, v in kwargs.items()]
+        args_str = [item for sublist in args_str for item in sublist]
+        args = parser.parse_args(args_str)
+    else:
+        args = parser.parse_args()
 
     # Checks
     if script == 'train':
