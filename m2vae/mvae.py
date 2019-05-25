@@ -49,56 +49,68 @@ class MVAE(nn.Module):
         # reparametrization trick to sample
         z = self.reparametrize(mu, logvar)
         # reconstruct inputs based on that gaussian
-        tracks_recon = self.decode(z)
+        tracks_recon = self.decode(z, targets=[t is not None for t in tracks])
         if return_z:
             return tracks_recon, z
         else:
             return tracks_recon, mu, logvar
 
     def encode(self, tracks):
-        assert tracks.shape[-1] == self.n_tracks
+        assert len(tracks) == self.n_tracks
         # Batch size
-        batch_size = tracks.shape[0]
+        batch_size = get_batch_size(tracks)
 
-        use_cuda = next(self.parameters()).is_cuda  # check if CUDA
+        cuda = next(self.parameters()).is_cuda  # check if CUDA
 
         # Row 0 is prior expert: N(0, 1).
         all_mu = torch.zeros((1 + self.n_tracks, batch_size, self.hidden_size))
         all_logvar = torch.zeros((1 + self.n_tracks, batch_size, self.hidden_size))
-        if use_cuda:
+        if cuda:
             all_mu = all_mu.cuda()
             all_logvar = all_logvar.cuda()
 
         for t in range(self.n_tracks):
-            track = tracks[:, :, :, :, t]
-            encoder = self.encoders[t]
-            track_mu, track_logvar = encoder(track)
+            track = tracks[t]
+            if track is not None:
+                encoder = self.encoders[t]
+                track_mu, track_logvar = encoder(track)
 
-            all_mu[t + 1] = track_mu
-            all_logvar[t + 1] = track_logvar
+                all_mu[t + 1] = track_mu
+                all_logvar[t + 1] = track_logvar
 
         # product of experts to combine gaussians
         mu, logvar = self.experts(all_mu, all_logvar)
         return mu, logvar
 
-    def decode(self, z):
+    def decode(self, z, targets=None):
+        if targets is None:
+            targets = [True for _ in range(self.n_tracks)]
         batch_size = z.shape[0]
-        decoded = torch.zeros((batch_size, 4, 48, 84, self.n_tracks),
-                              dtype=torch.float32).to(z.device)
-        tracks = []
-        for t in range(self.n_tracks):
-            decoder = self.decoders[t]
-            track = decoder(z)
-            decoded[:, :, :, :, t] = track
+        decoded = []
+        for t, decode_this in zip(range(self.n_tracks), targets):
+            if decode_this:
+                decoder = self.decoders[t]
+                track = decoder(z)
+                decoded.append(track)
+            else:
+                decoded.append(None)
         return decoded
+
 
 def get_batch_size(tracks):
     """
     If tracks is a track-major list of possibly None tracks, get the batch size
     """
+    return get_shape(tracks)[0]
+
+
+def get_shape(tracks):
+    """
+    If tracks is a track-major list of possibly None tracks, get the batch size
+    """
     for t in tracks:
         if t is not None:
-            return t.shape[0]
+            return t.shape
     raise ValueError("Cannot pass all None")
 
 
@@ -131,7 +143,7 @@ class ELBOLoss(nn.Module):
             self.mse_loss = nn.MSELoss()
         self.kl_factor = kl_factor
 
-    def forward(self, recon, data, mu, logvar, annealing_factor=1.0):
+    def forward(self, all_recon, all_data, mu, logvar, annealing_factor=1.0):
         """Compute the ELBO for an arbitrary number of data modalities.
         @param recon: list of torch.Tensors/Variables
                       Contains one for each modality.
@@ -144,26 +156,33 @@ class ELBOLoss(nn.Module):
         @param annealing_factor: float [default: 1]
                                  Beta - how much to weight the KL regularizer.
         """
-        assert recon.shape[4] == data.shape[4], "must supply ground truth for every modality."
-        batch_size = recon.shape[0]
-        n_bars = recon.shape[1]
-        n_tracks = recon.shape[4]
-
-        recon_2d = recon.view(batch_size, -1)
-        data_2d = data.view(batch_size, -1)
+        assert len(all_recon) == len(all_data)
+        batch_size, n_bars = get_shape(all_recon)[:2]
+        n_tracks = len(all_recon)
 
         # ==== RECONSTRUCTION LOSS ====
-        # Binary cross entropy
-        bce = self.bce_loss(recon_2d, data_2d)
-        recon_loss = bce
-        # Mean squared error
-        if self.mse_factor > 0:
-            recon_bar_major = recon.permute(0, 4, 1, 2, 3).contiguous().view(batch_size * n_bars * n_tracks, -1)
-            data_bar_major = data.permute(0, 4, 1, 2, 3).contiguous().view(batch_size * n_bars * n_tracks, -1)
+        all_bce = 0
+        all_mse = 0
+        n_recons = 0
+        for recon, data in zip(all_recon, all_data):
+            if recon is None or data is None:
+                assert recon is None and data is None
+                continue
+            n_recons += 1
+            recon_2d = recon.view(batch_size, -1)
+            data_2d = data.view(batch_size, -1)
 
-            recon_bar_major_values = torch.sigmoid(recon_bar_major)
-            mse = self.mse_loss(recon_bar_major_values, data_bar_major)
-            recon_loss = recon_loss + (self.mse_factor * mse)
+            # Binary cross entropy
+            all_bce += self.bce_loss(recon_2d, data_2d)
+            # Mean squared error
+            if self.mse_factor > 0:
+                recon_bar_major = recon.view(batch_size * n_bars, -1)
+                data_bar_major = data.view(batch_size * n_bars, -1)
+
+                recon_bar_major_values = torch.sigmoid(recon_bar_major)
+                all_mse += self.mse_loss(recon_bar_major_values, data_bar_major)
+        recon_loss = all_bce + (self.mse_factor * all_mse)
+        recon_loss /= n_recons
         # ==== KL DIVERGENCE ====
         kl_divergence  = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)
         kl_divergence = kl_divergence.mean()

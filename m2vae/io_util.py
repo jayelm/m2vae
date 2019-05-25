@@ -36,7 +36,7 @@ def parse_args(script, desc='', **kwargs):
         train_parser.add_argument('--hits_only', action='store_true', help='Predict hits only')
         train_parser.add_argument('--activation', default='relu', choices=['swish', 'lrelu', 'relu'],
                                   help='Nonlinear activation in encoders/decoders')
-        train_parser.add_argument('--hidden_size', type=int, default=128, help='Hidden size of multitrack embeddings')
+        train_parser.add_argument('--hidden_size', type=int, default=256, help='Hidden size of multitrack embeddings')
         train_parser.add_argument('--batch_size', type=int, default=128, help='Batch size')
         train_parser.add_argument('--no_kl', action='store_true', help="Don't use KL (vanilla autoencoder)")
         train_parser.add_argument('--n_tracks', type=int, default=5, help='Number of tracks (between 1 and 5 inclusive)')

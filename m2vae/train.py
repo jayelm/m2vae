@@ -5,7 +5,7 @@ Train an m2vae model.
 import os
 import sys
 from collections import defaultdict
-from datetime import datetime
+import contextlib
 
 import torch
 
@@ -20,6 +20,12 @@ import models
 import util
 import io_util
 import wrappers
+
+import logging
+logging.basicConfig(
+    format='%(asctime)s %(levelname)-8s %(message)s',
+    level=logging.INFO,
+    datefmt='%Y-%m-%d %H:%M:%S')
 
 
 def fast_f1(true, pred):
@@ -74,87 +80,46 @@ def compute_kl_annealing_factor(batch, epoch, n_batches, annealing_epochs):
             float(annealing_epochs * n_batches))
 
 
-def train(epoch, model, optimizer, loss, dataloader, args):
-    model.train()
-    report_f1 = (epoch % args.f1_interval == 0)
-    if report_f1:
-        meters = init_meters('loss', 'annealing_factor', 'recon_loss', 'kl_divergence', 'f1')
+def run(split, epoch, model, optimizer, loss, dataloaders, args):
+    """
+    Run the model for a single epoch.
+    """
+    training = split == 'train'
+    dataloader = dataloaders[split]
+    if training:
+        model.train()
+        context = contextlib.suppress
     else:
-        meters = init_meters('loss', 'annealing_factor', 'recon_loss', 'kl_divergence')
+        model.eval()
+        context = torch.no_grad
 
-    for i, tracks in enumerate(dataloader):
-        if args.no_kl:
-            annealing_factor = 0.0
-        elif epoch < args.annealing_epochs:
-            # compute the KL annealing factor for the current mini-batch in the current epoch
-            annealing_factor = compute_kl_annealing_factor(i, epoch, len(dataloader),
-                                                           args.annealing_epochs)
-        else:
-            annealing_factor = 1.0
-        # tracks: [batch_size, n_bar, n_timesteps, n_pitches, n_tracks]
-        tracks = tracks[:, :, :, :, :args.n_tracks]
-        if args.cuda:
-            tracks = tracks.cuda()
-        batch_size = tracks.shape[0]
-
-        # Refresh the optimizer
-        optimizer.zero_grad()
-
-        total_loss = 0
-        n_elbo_terms = 0
-
-        # Forward pass - all data
-        tracks_recon, mu, logvar = model(tracks)
-
-        this_loss, recon_loss, kl_divergence = loss(tracks_recon, tracks, mu, logvar,
-                                                    annealing_factor=annealing_factor)
-
-        total_loss += this_loss
-        n_elbo_terms += 1
-
-        meters['loss'].update(total_loss, batch_size)
-        meters['annealing_factor'].update(annealing_factor, batch_size)
-        meters['recon_loss'].update(recon_loss, batch_size)
-        meters['kl_divergence'].update(kl_divergence, batch_size)
-
-        # All data - F1 score
-        if report_f1:
-            f1 = fast_f1(tracks.type(torch.ByteTensor),
-                         (tracks_recon > 0).type(torch.ByteTensor))
-            meters['f1'].update(f1, batch_size)
-
-        total_loss.backward()
-        optimizer.step()
-
-        if i % args.log_interval == 0:
-            print('{} [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tAnnealing-Factor: {:.3f}'.format(
-                epoch, i * batch_size, len(dataloader.dataset),
-                100. * i / len(dataloader), meters['loss'].avg, annealing_factor))
-
-    metrics = compute_metrics(meters)
-    if not report_f1:
-        metrics['f1'] = -1.0
-    dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print('{} Epoch: {}\ttrain {}'.format(
-        dt, epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
-    ))
-    return metrics
-
-
-def test(epoch, model, optimizer, loss, dataloader, args):
-    model.eval()
     report_f1 = (epoch % args.f1_interval == 0)
+    measures = ['loss', 'annealing_factor', 'recon_loss', 'kl_divergence']
     if report_f1:
-        meters = init_meters('loss', 'recon_loss', 'kl_divergence', 'f1')
-    else:
-        meters = init_meters('loss', 'recon_loss', 'kl_divergence')
+        measures.append('f1')
+    meters = init_meters(*measures)
 
-    with torch.no_grad():
+    with context():
         for i, tracks in enumerate(dataloader):
+            if args.no_kl:
+                annealing_factor = 0.0
+            elif training and epoch < args.annealing_epochs:
+                annealing_factor = compute_kl_annealing_factor(i, epoch, len(dataloader),
+                                                               args.annealing_epochs)
+            else:
+                annealing_factor = 1.0  # No annealing at val/test
+            # tracks: [batch_size, n_bar, n_timesteps, n_pitches, n_tracks]
             tracks = tracks[:, :, :, :, :args.n_tracks]
             if args.cuda:
                 tracks = tracks.cuda()
             batch_size = tracks.shape[0]
+
+            # Split tracks into list so we can zero them out
+            tracks = [tracks[:, :, :, :, i] for i in range(args.n_tracks)]
+
+            # Refresh the optimizer
+            if training:
+                optimizer.zero_grad()
 
             total_loss = 0
             n_elbo_terms = 0
@@ -162,31 +127,43 @@ def test(epoch, model, optimizer, loss, dataloader, args):
             # Forward pass - all data
             tracks_recon, mu, logvar = model(tracks)
 
-            # Note: here total val loss assumes no annealing
             this_loss, recon_loss, kl_divergence = loss(tracks_recon, tracks, mu, logvar,
-                                                        annealing_factor=0.0 if args.no_kl else 1.0)
+                                                        annealing_factor=annealing_factor)
 
             total_loss += this_loss
             n_elbo_terms += 1
 
-            # All data - F1 score
-            if report_f1:
-                f1 = fast_f1(tracks.type(torch.ByteTensor),
-                             (tracks_recon > 0).type(torch.ByteTensor))
-                meters['f1'].update(f1, batch_size)
+            if training:
+                # Additional passes
+                # Forward pass - individual tracks
+                pass
+                total_loss.backward()
+                optimizer.step()
 
             meters['loss'].update(total_loss, batch_size)
+            meters['annealing_factor'].update(annealing_factor, batch_size)
             meters['recon_loss'].update(recon_loss, batch_size)
             meters['kl_divergence'].update(kl_divergence, batch_size)
 
-        metrics = compute_metrics(meters)
-        if not report_f1:
-            metrics['f1'] = -1.0
-        dt = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print('{} Epoch: {}\tval {}'.format(
-            dt, epoch, ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
-        ))
+            # All data - F1 score
+            if report_f1:
+                f1 = sum(
+                    fast_f1(t.type(torch.ByteTensor), (tr > 0).type(torch.ByteTensor))
+                    for t, tr in zip(tracks, tracks_recon))
+                f1 /= args.n_tracks
+                meters['f1'].update(f1, batch_size)
 
+            if training and i % args.log_interval == 0:
+                logging.info('Epoch {}\t[{}/{} ({:.0f}%)]\tLoss: {:.6f}\tAnnealing-Factor: {:.3f}'.format(
+                    epoch, i * batch_size, len(dataloader.dataset),
+                    100. * i / len(dataloader), meters['loss'].avg, annealing_factor))
+
+    metrics = compute_metrics(meters)
+    if not report_f1:
+        metrics['f1'] = -1.0
+    logging.info('Epoch {}\t{} {}'.format(
+        epoch, split.upper(), ' '.join('{}: {:.4f}'.format(m, v) for m, v in metrics.items())
+    ))
     return metrics
 
 
@@ -222,8 +199,8 @@ if __name__ == '__main__':
             start_epoch, args.epochs))
 
     for epoch in range(start_epoch, args.epochs + 1):
-        train_metrics = train(epoch, model, optimizer, loss, dataloaders['train'], args)
-        val_metrics = test(epoch, model, optimizer, loss, dataloaders['val'], args)
+        train_metrics = run('train', epoch, model, optimizer, loss, dataloaders, args)
+        val_metrics = run('val', epoch, model, optimizer, loss, dataloaders, args)
 
         for metric, value in train_metrics.items():
             metrics['train_{}'.format(metric)].append(value)
