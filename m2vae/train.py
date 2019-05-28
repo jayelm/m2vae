@@ -197,7 +197,7 @@ def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
 
             if training:
                 # Additional forward passes
-                # Individual tracks/encoders
+                # Individual tracks
                 if not args.no_single_pass:
                     for i in range(args.n_tracks):
                         tracks_single = [tracks[t] if t == i else None
@@ -210,8 +210,8 @@ def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
                         total_recon_loss += recon_loss
                         total_kl_divergence += kl_divergence
 
+                # Subsampled combinations of tracks
                 if args.approx_m > 0:
-                    # Sample some combinations
                     sample_combos = sample_combinations(m_combos, random_state=random_state, size=args.approx_m)
                     for sample_combo in sample_combos:
                         tracks_samp = [track if i else None for
@@ -224,6 +224,7 @@ def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
                         total_recon_loss += recon_loss
                         total_kl_divergence += kl_divergence
 
+                # SGD step
                 total_loss.backward()
                 optimizer.step()
 
