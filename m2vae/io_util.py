@@ -51,7 +51,7 @@ def parse_args(script, desc='', **kwargs):
         train_parser.add_argument('--n_workers', type=int, default=4, help='Number of dataloader workers')
         train_parser.add_argument('--pin_memory', action='store_true', help='Load data into CUDA-pinned memory')
         train_parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate')
-        train_parser.add_argument('--f1_interval', type=int, default=5, help='How often to calcaulte f1 score')
+        train_parser.add_argument('--f1_interval', type=int, default=5, help='How often to calculate f1 score')
         train_parser.add_argument('--log_interval', type=int, default=100, help='How often to log progress (in batches)')
 
     if kwargs:

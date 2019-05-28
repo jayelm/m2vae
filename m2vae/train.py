@@ -161,11 +161,11 @@ def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
     meters = init_meters(*measures)
 
     with context():
-        for i, tracks in enumerate(dataloader):
+        for batch_i, tracks in enumerate(dataloader):
             if args.no_kl:
                 annealing_factor = 0.0
             elif training and epoch < args.annealing_epochs:
-                annealing_factor = compute_kl_annealing_factor(i, epoch, len(dataloader),
+                annealing_factor = compute_kl_annealing_factor(batch_i, epoch, len(dataloader),
                                                                args.annealing_epochs)
             else:
                 annealing_factor = 1.0  # No annealing at val/test
@@ -241,10 +241,10 @@ def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
                 f1 /= args.n_tracks
                 meters['f1'].update(f1, batch_size)
 
-            if training and i % args.log_interval == 0:
+            if training and batch_i % args.log_interval == 0:
                 logging.info('Epoch {}\t[{}/{} ({:.0f}%)]\tLoss: {:.6f}\tAnnealing-Factor: {:.3f}'.format(
-                    epoch, i * batch_size, len(dataloader.dataset),
-                    100. * i / len(dataloader), meters['loss'].avg, annealing_factor))
+                    epoch, batch_i * batch_size, len(dataloader.dataset),
+                    100 * batch_i / len(dataloader), meters['loss'].avg, annealing_factor))
 
     metrics = compute_metrics(meters)
     if not report_f1:
@@ -294,9 +294,15 @@ if __name__ == '__main__':
         val_metrics = run('val', epoch, model, optimizer, loss, dataloaders, m_combos, args, random_state=random)
 
         for metric, value in train_metrics.items():
-            metrics['train_{}'.format(metric)].append(value)
+            try:
+                metrics['train_{}'.format(metric)].append(value)
+            except KeyError:
+                pass  # Could be missing due to resuming from older code
         for metric, value in val_metrics.items():
-            metrics['val_{}'.format(metric)].append(value)
+            try:
+                metrics['val_{}'.format(metric)].append(value)
+            except KeyError:
+                pass
         metrics['current_epoch'] = epoch
 
         is_best = val_metrics['f1'] > metrics['best_f1']
