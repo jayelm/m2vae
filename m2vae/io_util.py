@@ -45,6 +45,7 @@ def parse_args(script, desc='', **kwargs):
         train_parser.add_argument('--mse_factor', type=float, default=1, help='Weight on mean squared error recon loss')
         train_parser.add_argument('--kl_factor', type=float, default=0.001, help='Constant weight on KL divergence')
         train_parser.add_argument('--max_train', type=int, default=None, help='Maximum training examples to train on')
+        train_parser.add_argument('--approx_m', type=int, default=0, help='Number of sampled modality combinations to train for each batch')
         train_parser.add_argument('--resume', action='store_true', help='Try to resume from checkpoint')
         train_parser.add_argument('--n_workers', type=int, default=4, help='Number of dataloader workers')
         train_parser.add_argument('--pin_memory', action='store_true', help='Load data into CUDA-pinned memory')

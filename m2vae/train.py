@@ -6,6 +6,7 @@ import os
 import sys
 from collections import defaultdict
 import contextlib
+from itertools import combinations
 
 import torch
 
@@ -80,7 +81,67 @@ def compute_kl_annealing_factor(batch, epoch, n_batches, annealing_epochs):
             float(annealing_epochs * n_batches))
 
 
-def run(split, epoch, model, optimizer, loss, dataloaders, args):
+def enumerate_combinations(n):
+    """Enumerate entire pool of combinations.
+
+    We use this to define the domain of ELBO terms,
+    (the pool of 2^19 ELBO terms).
+    @param n: integer
+              number of features (19 for Celeb19)
+    @return: a list of ALL permutations
+    """
+    combos = []
+    for i in range(2, n):  # 1 to n - 1
+        _combos = list(combinations(range(n), i))
+        combos  += _combos
+
+    combos_np = np.zeros((len(combos), n))
+    for i in range(len(combos)):
+        for idx in combos[i]:
+            combos_np[i][idx] = 1
+
+    combos_np = combos_np.astype(np.bool)
+    return combos_np
+
+
+def sample_combinations(pool, random_state=None, size=1):
+    """Return boolean list of which data points to use to compute a modality.
+    Ignore combinations that are all True or only contain a single True.
+    @param pool: np.array
+                 enumerating all possible combinations.
+    @param size: integer (default: 1)
+                 number of combinations to sample.
+    """
+    if random_state is None:
+        random_state = np.random
+
+    n_modalities = pool.shape[1]
+    pool_size    = len(pool)
+    pool_sums    = np.sum(pool, axis=1)
+    pool_dist    = np.bincount(pool_sums)
+    pool_space   = np.where(pool_dist > 0)[0]
+
+    sample_pool  = random_state.choice(pool_space, size, replace=True)
+    sample_dist  = np.bincount(sample_pool)
+    if sample_dist.size < n_modalities:
+        zeros_pad   = np.zeros(n_modalities - sample_dist.size).astype(np.int)
+        sample_dist = np.concatenate((sample_dist, zeros_pad))
+
+    sample_combo = []
+    for ix in range(n_modalities):
+        if sample_dist[ix] > 0:
+            pool_i  = pool[pool_sums == ix]
+            combo_i = random_state.choice(range(pool_i.shape[0]),
+                                          size=sample_dist[ix],
+                                          replace=False)
+            sample_combo.append(pool_i[combo_i])
+
+    sample_combo = np.concatenate(sample_combo)
+    return sample_combo
+
+
+def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
+        random_state=None):
     """
     Run the model for a single epoch.
     """
@@ -122,28 +183,53 @@ def run(split, epoch, model, optimizer, loss, dataloaders, args):
                 optimizer.zero_grad()
 
             total_loss = 0
-            n_elbo_terms = 0
+            total_recon_loss = 0
+            total_kl_divergence = 0
 
             # Forward pass - all data
             tracks_recon, mu, logvar = model(tracks)
 
             this_loss, recon_loss, kl_divergence = loss(tracks_recon, tracks, mu, logvar,
                                                         annealing_factor=annealing_factor)
-
             total_loss += this_loss
-            n_elbo_terms += 1
+            total_recon_loss += recon_loss
+            total_kl_divergence += kl_divergence
 
             if training:
-                # Additional passes
-                # Forward pass - individual tracks
-                pass
+                # Additional forward passes
+                # Individual tracks/encoders
+                for i in range(args.n_tracks):
+                    tracks_single = [tracks[t] if t == i else None
+                                     for t in range(args.n_tracks)]
+                    tracks_single_recon, mu, logvar = model(tracks_single)
+
+                    this_loss, recon_loss, kl_divergence = loss(tracks_single_recon, tracks_single, mu, logvar,
+                                                                annealing_factor=annealing_factor)
+                    total_loss += this_loss
+                    total_recon_loss += recon_loss
+                    total_kl_divergence += kl_divergence
+
+                if args.approx_m > 0:
+                    # Sample some combinations
+                    sample_combos = sample_combinations(m_combos, random_state=random_state, size=args.approx_m)
+                    for sample_combo in sample_combos:
+                        tracks_samp = [track if i else None for
+                                       i, track in zip(sample_combo, tracks)]
+                        tracks_samp_recon, mu, logvar = model(tracks_samp)
+
+                        this_loss, recon_loss, kl_divergence = loss(tracks_samp_recon, tracks_samp, mu, logvar,
+                                                                    annealing_factor=annealing_factor)
+                        total_loss += this_loss
+                        total_recon_loss += recon_loss
+                        total_kl_divergence += kl_divergence
+
                 total_loss.backward()
                 optimizer.step()
 
             meters['loss'].update(total_loss, batch_size)
             meters['annealing_factor'].update(annealing_factor, batch_size)
-            meters['recon_loss'].update(recon_loss, batch_size)
-            meters['kl_divergence'].update(kl_divergence, batch_size)
+            meters['recon_loss'].update(total_recon_loss, batch_size)
+            meters['kl_divergence'].update(total_kl_divergence, batch_size)
 
             # All data - F1 score
             if report_f1:
@@ -198,9 +284,12 @@ if __name__ == '__main__':
         raise RuntimeError("start_epoch {} > total epochs {}".format(
             start_epoch, args.epochs))
 
+    # Enumerate subsampled modality combinations
+    m_combos = enumerate_combinations(args.n_tracks)
+
     for epoch in range(start_epoch, args.epochs + 1):
-        train_metrics = run('train', epoch, model, optimizer, loss, dataloaders, args)
-        val_metrics = run('val', epoch, model, optimizer, loss, dataloaders, args)
+        train_metrics = run('train', epoch, model, optimizer, loss, dataloaders, m_combos, args, random_state=random)
+        val_metrics = run('val', epoch, model, optimizer, loss, dataloaders, m_combos, args, random_state=random)
 
         for metric, value in train_metrics.items():
             metrics['train_{}'.format(metric)].append(value)

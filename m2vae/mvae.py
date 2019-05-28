@@ -63,20 +63,19 @@ class MVAE(nn.Module):
         cuda = next(self.parameters()).is_cuda  # check if CUDA
 
         # Row 0 is prior expert: N(0, 1).
-        all_mu = torch.zeros((1 + self.n_tracks, batch_size, self.hidden_size))
-        all_logvar = torch.zeros((1 + self.n_tracks, batch_size, self.hidden_size))
+        present_tracks = [(t, track) for t, track in enumerate(tracks) if track is not None]
+        all_mu = torch.zeros((1 + len(present_tracks), batch_size, self.hidden_size))
+        all_logvar = torch.zeros((1 + len(present_tracks), batch_size, self.hidden_size))
         if cuda:
             all_mu = all_mu.cuda()
             all_logvar = all_logvar.cuda()
 
-        for t in range(self.n_tracks):
-            track = tracks[t]
-            if track is not None:
-                encoder = self.encoders[t]
-                track_mu, track_logvar = encoder(track)
+        for i, (t, track) in enumerate(present_tracks):
+            encoder = self.encoders[t]
+            track_mu, track_logvar = encoder(track)
 
-                all_mu[t + 1] = track_mu
-                all_logvar[t + 1] = track_logvar
+            all_mu[i + 1] = track_mu
+            all_logvar[i + 1] = track_logvar
 
         # product of experts to combine gaussians
         mu, logvar = self.experts(all_mu, all_logvar)
@@ -158,7 +157,6 @@ class ELBOLoss(nn.Module):
         """
         assert len(all_recon) == len(all_data)
         batch_size, n_bars = get_shape(all_recon)[:2]
-        n_tracks = len(all_recon)
 
         # ==== RECONSTRUCTION LOSS ====
         all_bce = 0
