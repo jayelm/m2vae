@@ -198,16 +198,17 @@ def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
             if training:
                 # Additional forward passes
                 # Individual tracks/encoders
-                for i in range(args.n_tracks):
-                    tracks_single = [tracks[t] if t == i else None
-                                     for t in range(args.n_tracks)]
-                    tracks_single_recon, mu, logvar = model(tracks_single)
+                if not args.no_single_pass:
+                    for i in range(args.n_tracks):
+                        tracks_single = [tracks[t] if t == i else None
+                                         for t in range(args.n_tracks)]
+                        tracks_single_recon, mu, logvar = model(tracks_single)
 
-                    this_loss, recon_loss, kl_divergence = loss(tracks_single_recon, tracks_single, mu, logvar,
-                                                                annealing_factor=annealing_factor)
-                    total_loss += this_loss
-                    total_recon_loss += recon_loss
-                    total_kl_divergence += kl_divergence
+                        this_loss, recon_loss, kl_divergence = loss(tracks_single_recon, tracks_single, mu, logvar,
+                                                                    annealing_factor=annealing_factor)
+                        total_loss += this_loss
+                        total_recon_loss += recon_loss
+                        total_kl_divergence += kl_divergence
 
                 if args.approx_m > 0:
                     # Sample some combinations
