@@ -29,8 +29,8 @@ class MVAE(nn.Module):
         self.durations = durations
         self.experts = ProductOfExperts()
 
-    def reparametrize(self, mu, logvar):
-        if self.training:
+    def reparametrize(self, mu, logvar, override_training=False):
+        if self.training or override_training:
             std = logvar.mul(0.5).exp_()
             eps = Variable(std.data.new(std.size()).normal_())
             return eps.mul(std).add_(mu)

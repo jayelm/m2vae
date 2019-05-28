@@ -80,6 +80,10 @@ def to_track(track_np, n=None, is_drum=False, name='piano', program=0):
     return track
 
 
+def track_is_empty(track):
+    return (track.sum() == 0)
+
+
 def to_multitrack(mt, n=None):
     """
     Create a multitrack output out of a model tensor
