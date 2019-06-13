@@ -1,5 +1,5 @@
 """
-Visualize a trained m2vae model.
+Functions and utilities for visualizaing a trained m2vae model.
 """
 
 import os
@@ -121,45 +121,3 @@ def ipy_display(audio, title=None, rate=DEFAULT_RATE):
     if title is not None:
         display(HTML('<h2>{}</h2>'.format(title)))
     display(Audio(audio, rate=rate))
-
-
-if __name__ == '__main__':
-    args = io_util.parse_args('vis', desc=__doc__)
-    util.restore_args(args, args.exp_dir)
-
-    # Seed
-    random = np.random.RandomState(args.seed)
-
-    dataloaders, pos_prop = wrappers.load_data(args, random_state=random,
-                                               use_random_transpose=False)
-    model, optimizer, loss = wrappers.build_mvae(args, pos_prop=pos_prop)
-
-    util.restore_checkpoint(model, optimizer, args.exp_dir,
-                            cuda=args.cuda,
-                            filename='model_best.pth')
-
-    model.eval()
-
-    for i, tracks in enumerate(dataloaders['val']):
-        tracks = tracks[:, :, :, :, :args.n_tracks]
-        tracks_recon, z = model(tracks, return_z=True)
-
-        tracks_np = tracks.detach().cpu().numpy().astype(np.bool)
-        tracks_recon_np = (tracks_recon.detach().cpu().numpy() > 0.0)
-
-        print(f1_score(tracks_np.flatten(), tracks_recon_np.flatten()))
-
-        for track, track_recon in zip(tracks_np, tracks_recon_np):
-            track = to_track(track[:, :, :, 0])
-            track_recon = to_track(track_recon[:, :, :, 0])
-
-            f, axarr = plt.subplots(ncols=2, figsize=(20, 4))
-
-            axarr[0].set_title('Original')
-            axarr[1].set_title('Reconstructed')
-
-            ppr.plot_pianoroll(axarr[0], track.pianoroll)
-            ppr.plot_pianoroll(axarr[1], track_recon.pianoroll)
-
-            plt.show()
-            x = input('Continue?')

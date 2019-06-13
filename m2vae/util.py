@@ -49,7 +49,7 @@ def restore_checkpoint(model, optimizer, exp_dir, filename='checkpoint.pth',
 
 def restore_args(args, exp_dir):
     if not os.path.exists(args.exp_dir):
-        raise RuntimeError("Can't find {}".format(args.exp_Dir))
+        raise RuntimeError("Can't find {}".format(args.exp_dir))
 
     exp_args = load_args(args.exp_dir)
     for arg, val in exp_args.items():
