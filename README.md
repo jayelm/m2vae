@@ -1,2 +1,3 @@
-# cvc
-Count von Count
+# M2VAE
+
+Multimodal music VAE
