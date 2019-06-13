@@ -92,7 +92,7 @@ def to_multitrack(mt, n=None):
     for each track.
     TODO: Support custom programs/names just like to_track.
     """
-    n_tracks = mt.shape[3]
+    n_tracks = len(mt)
     if n is not None and len(n) != n_tracks:
         raise ValueError("Must supply n == n_tracks")
     tracks = []
@@ -101,7 +101,7 @@ def to_multitrack(mt, n=None):
             this_n = i
         else:
             this_n = n[i]
-        tracks.append(to_track(mt[:, :, :, i], n=i))
+        tracks.append(to_track(mt[i], n=i))
     return ppr.Multitrack(tracks=tracks, beat_resolution=12,
                           downbeat=DOWNBEATS_ONEHOT)
 
