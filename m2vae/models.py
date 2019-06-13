@@ -131,10 +131,16 @@ class ConvBarEncoder(nn.Module):
         act = ACTIVATIONS[activation]
 
         self.trunk = nn.Sequential(
-            nn.Conv2d(1, 64, kernel_size=(1, 12), stride=(1, 12)),
+            nn.Conv2d(1, 64, kernel_size=(1, 7), stride=(1, 7)),
             nn.BatchNorm2d(64),
             act(),
-            nn.Conv2d(64, 128, kernel_size=(1, 7), stride=(1, 7)),
+            nn.Conv2d(64, 128, kernel_size=(1, 3), stride=(1, 3)),
+            nn.BatchNorm2d(128),
+            act(),
+            nn.Conv2d(128, 128, kernel_size=(1, 2), stride=(1, 2)),
+            nn.BatchNorm2d(128),
+            act(),
+            nn.Conv2d(128, 128, kernel_size=(1, 2), stride=(1, 2)),
             nn.BatchNorm2d(128),
             act(),
             nn.Conv2d(128, 256, kernel_size=(3, 1), stride=(3, 1)),
@@ -150,6 +156,8 @@ class ConvBarEncoder(nn.Module):
             nn.BatchNorm2d(1024),
             act(),
             nn.Conv2d(1024, 128, kernel_size=(2, 1), stride=(2, 1)),
+            nn.BatchNorm2d(128),
+            act(),
         )
 
     def forward(self, x):
@@ -285,10 +293,18 @@ class ConvBarDecoder(BarDecoder):
             nn.ConvTranspose2d(256, 128, kernel_size=(3, 1), stride=(3, 1)),
             nn.BatchNorm2d(128),
             act(),
-            nn.ConvTranspose2d(128, 64, kernel_size=(1, 7), stride=(1, 7)),
+            nn.ConvTranspose2d(128, 128, kernel_size=(1, 2), stride=(1, 2)),
+            nn.BatchNorm2d(128),
+            act(),
+            nn.ConvTranspose2d(128, 128, kernel_size=(1, 2), stride=(1, 2)),
+            nn.BatchNorm2d(128),
+            act(),
+            nn.ConvTranspose2d(128, 64, kernel_size=(1, 3), stride=(1, 3)),
             nn.BatchNorm2d(64),
             act(),
-            nn.ConvTranspose2d(64, 1, kernel_size=(1, 12), stride=(1, 12)),
+            nn.ConvTranspose2d(64, 1, kernel_size=(1, 7), stride=(1, 7)),
+            nn.BatchNorm2d(1),
+            act(),
         )
 
     def note_decode(self, x_bar):

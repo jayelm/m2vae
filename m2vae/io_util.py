@@ -34,6 +34,7 @@ def parse_args(script, desc='', **kwargs):
     if script == 'train':
         train_parser = parser.add_argument_group('train args')
         train_parser.add_argument('--hits_only', action='store_true', help='Predict hits only')
+        train_parser.add_argument('--note_condition', action='store_true', help='Condition decoder on distribution of notes')
         train_parser.add_argument('--activation', default='relu', choices=['swish', 'lrelu', 'relu'],
                                   help='Nonlinear activation in encoders/decoders')
         train_parser.add_argument('--hidden_size', type=int, default=256, help='Hidden size of multitrack embeddings')
@@ -61,9 +62,13 @@ def parse_args(script, desc='', **kwargs):
     else:
         args = parser.parse_args()
 
+
     # Checks
     if script == 'train':
         if args.n_tracks < 1 or args.n_tracks > 5:
             parser.error('--n_tracks must be between 1 and 5 inclusive')
+
+        if args.note_condition and args.n_tracks == 1:
+            parser.error('cannot condition when only using drum track')
 
     return args
