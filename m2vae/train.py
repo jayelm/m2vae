@@ -161,7 +161,7 @@ def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
     meters = init_meters(*measures)
 
     with context():
-        for batch_i, tracks in enumerate(dataloader):
+        for batch_i, (tracks, notes) in enumerate(dataloader):
             if args.no_kl:
                 annealing_factor = 0.0
             elif training and epoch < args.annealing_epochs:
@@ -173,6 +173,8 @@ def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
             tracks = tracks[:, :, :, :, :args.n_tracks]
             if args.cuda:
                 tracks = tracks.cuda()
+                if notes is not None:
+                    notes = notes.cuda()
             batch_size = tracks.shape[0]
 
             # Split tracks into list so we can zero them out
@@ -187,7 +189,7 @@ def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
             total_kl_divergence = 0
 
             # Forward pass - all data
-            tracks_recon, mu, logvar = model(tracks)
+            tracks_recon, mu, logvar = model(tracks, notes)
 
             this_loss, recon_loss, kl_divergence = loss(tracks_recon, tracks, mu, logvar,
                                                         annealing_factor=annealing_factor)
@@ -202,7 +204,7 @@ def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
                     for i in range(args.n_tracks):
                         tracks_single = [tracks[t] if t == i else None
                                          for t in range(args.n_tracks)]
-                        tracks_single_recon, mu, logvar = model(tracks_single)
+                        tracks_single_recon, mu, logvar = model(tracks_single, notes)
 
                         this_loss, recon_loss, kl_divergence = loss(tracks_single_recon, tracks_single, mu, logvar,
                                                                     annealing_factor=annealing_factor)
@@ -216,7 +218,7 @@ def run(split, epoch, model, optimizer, loss, dataloaders, m_combos, args,
                     for sample_combo in sample_combos:
                         tracks_samp = [track if i else None for
                                        i, track in zip(sample_combo, tracks)]
-                        tracks_samp_recon, mu, logvar = model(tracks_samp)
+                        tracks_samp_recon, mu, logvar = model(tracks_samp, notes)
 
                         this_loss, recon_loss, kl_divergence = loss(tracks_samp_recon, tracks_samp, mu, logvar,
                                                                     annealing_factor=annealing_factor)
@@ -268,7 +270,8 @@ if __name__ == '__main__':
     random = np.random.RandomState(args.seed)
 
     dataloaders, pos_prop = wrappers.load_data(args, random_state=random,
-                                               use_random_transpose=True)
+                                               use_random_transpose=True,
+                                               note_condition=args.note_condition)
     model, optimizer, loss = wrappers.build_mvae(args, pos_prop=pos_prop)
 
     # If resume, load metrics; otherwise init metrics

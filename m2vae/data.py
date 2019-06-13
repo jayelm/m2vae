@@ -37,7 +37,8 @@ class LPD(Dataset):
     """
     LPD dataset
     """
-    def __init__(self, data_file=None, data=None, use_random_transpose=True, max_size=None):
+    def __init__(self, data_file=None, data=None, use_random_transpose=True, max_size=None,
+                 note_condition=False):
         if data_file is None and data is None:
             raise ValueError("Must supply one of data_file or data")
         if data_file is not None and data is not None:
@@ -53,6 +54,7 @@ class LPD(Dataset):
         if max_size is not None:
             self.data = self.data[:max_size]
         self.use_random_transpose = use_random_transpose
+        self.note_condition = note_condition
 
     def __len__(self):
         return self.data.shape[0]
@@ -64,7 +66,28 @@ class LPD(Dataset):
         # Apply random transpose
         if self.use_random_transpose:
             p = random_transpose(p)
-        return p
+        notes = None
+        if self.note_condition:
+            notes = extract_note_distribution(p)
+        return p, notes
+
+
+def extract_note_distribution(p):
+    """
+    Input: pianoroll of shape (n_bars, n_timesteps, n_pitches, n_tracks)
+    """
+    p = p[:, :, :, 1:]  # Remove drum track
+    n_bars, n_timesteps, n_pitches, n_tracks = p.shape
+    p_flat = p.reshape((n_bars * n_timesteps, n_pitches, n_tracks))
+    # Concat along tracks
+    p_combined = p_flat.transpose(2, 0, 1).reshape((n_tracks * n_bars * n_timesteps, n_pitches))
+    notes = np.zeros(12, dtype=np.float32)
+    for pitch in range(12):
+        notes[pitch] = p_combined[:, pitch::12].sum()
+    if notes.sum() == 0:  # Empty track?
+        return notes
+    return notes / notes.sum()
+
 
 def train_val_test_split(data, val_size=0.1, test_size=0.1, random_state=None,
                          **kwargs):
