@@ -13,7 +13,7 @@ import mvae
 import data
 
 
-def load_data(args, random_state=None, use_random_transpose=False, note_condition=False):
+def load_data(args, random_state=None, use_random_transpose=False):
     lpd_file = args.data_file
     if args.debug and 'debug' not in lpd_file:
         lpd_file = lpd_file.replace('.npz', '_debug.npz')
@@ -34,8 +34,7 @@ def load_data(args, random_state=None, use_random_transpose=False, note_conditio
     # Calcualte mean positive weight
     pos_prop = lpd_raw.mean()
     lpds = data.train_val_test_split(lpd_raw, random_state=random_state,
-                                     use_random_transpose=use_random_transpose,
-                                     note_condition=note_condition)
+                                     use_random_transpose=use_random_transpose)
     del lpd_raw
     dataloaders = {}
     for split, dataset in lpds.items():
@@ -64,7 +63,7 @@ def build_mvae(args, pos_prop=1):
         return note_decoder
 
     # Model
-    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=args.n_tracks, hidden_size=args.hidden_size)
+    model = mvae.MVAE(encoder_func, decoder_func, n_tracks=args.n_tracks, hidden_size=args.hidden_size, note_condition=args.note_condition)
 
     # Optimizer
     optimizer = optim.Adam(model.parameters(), lr=args.lr)

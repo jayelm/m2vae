@@ -37,8 +37,7 @@ class LPD(Dataset):
     """
     LPD dataset
     """
-    def __init__(self, data_file=None, data=None, use_random_transpose=True, max_size=None,
-                 note_condition=False):
+    def __init__(self, data_file=None, data=None, use_random_transpose=True, max_size=None):
         if data_file is None and data is None:
             raise ValueError("Must supply one of data_file or data")
         if data_file is not None and data is not None:
@@ -54,7 +53,6 @@ class LPD(Dataset):
         if max_size is not None:
             self.data = self.data[:max_size]
         self.use_random_transpose = use_random_transpose
-        self.note_condition = note_condition
 
     def __len__(self):
         return self.data.shape[0]
@@ -66,9 +64,7 @@ class LPD(Dataset):
         # Apply random transpose
         if self.use_random_transpose:
             p = random_transpose(p)
-        notes = None
-        if self.note_condition:
-            notes = extract_note_distribution(p)
+        notes = extract_note_distribution(p)
         return p, notes
 
 

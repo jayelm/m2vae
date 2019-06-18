@@ -20,13 +20,14 @@ class MVAE(nn.Module):
                  encoder_func,
                  decoder_func,
                  n_tracks=5, hidden_size=256,
-                 durations=False):
+                 durations=False, note_condition=False):
         super(MVAE, self).__init__()
         self.encoders = nn.ModuleList([encoder_func() for _ in range(n_tracks)])
         self.decoders = nn.ModuleList([decoder_func() for _ in range(n_tracks)])
         self.n_tracks = n_tracks
         self.hidden_size = hidden_size
         self.durations = durations
+        self.note_condition = note_condition
         self.experts = ProductOfExperts()
 
     def reparametrize(self, mu, logvar, override_training=False):
@@ -37,7 +38,7 @@ class MVAE(nn.Module):
         else:  # return mean during inference
             return mu
 
-    def forward(self, tracks, notes=None, return_z=False):
+    def forward(self, tracks, notes, return_z=False):
         """Forward pass through the MVAE.
 
         @param tracks: list of ?PyTorch.Tensors
@@ -49,7 +50,7 @@ class MVAE(nn.Module):
         # reparametrization trick to sample
         z = self.reparametrize(mu, logvar)
         # reconstruct inputs based on that gaussian
-        if notes is not None:
+        if self.note_condition:
             z = torch.cat((z, notes), 1)
         tracks_recon = self.decode(z, targets=[t is not None for t in tracks])
         if return_z:
